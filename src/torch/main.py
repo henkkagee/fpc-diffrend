@@ -12,7 +12,7 @@ import camera as c
 # ------------------------------------------------------------
 
 
-def run(mdir, nbl, bmesh, imdir, it):
+def run(mdir, nbl, bmesh, imdir, it, calib):
     # blendshapes
     bl_vtx = np.empty(nbl)
     bl_tri = np.empty(nbl)
@@ -58,6 +58,7 @@ imagedir = ""
 num_bl = 624
 basemesh = ""
 iters = 1000
+calibration = ""
 
 if __name__ == "__main__":
-    run(meshdir, num_bl, basemesh, imagedir, iters)
+    run(meshdir, num_bl, basemesh, imagedir, iters, calibration)

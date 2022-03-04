@@ -69,7 +69,10 @@ for fname in images:
     # assume images are processed in camera order
     if camname != prevcamname:
         # all (9) images from one camera have been processed
-        calibdict[prevcamname] = calibrate(objpoints, imgpoints, img)
+        realcamname = prevcamname.replace("bottom", "primary")
+        realcamname = realcamname.replace("top", "secondary")
+        realcamname = realcamname.replace("colour", "texture")
+        calibdict[realcamname] = calibrate(objpoints, imgpoints, img)
         imgpoints = []
 
     # read image as grayscale
@@ -101,7 +104,10 @@ for fname in images:
 
     prevcamname = camname
 
-calibdict[prevcamname] = calibrate(objpoints, imgpoints, img)
+realcamname = prevcamname.replace("bottom", "primary")
+realcamname = realcamname.replace("top", "secondary")
+realcamname = realcamname.replace("colour", "texture")
+calibdict[realcamname] = calibrate(objpoints, imgpoints, img)
 
 # save calibration file
 json.dump(calibdict, codecs.open("C:/Users/Henkka/Projects/invrend-fpc/data/calibration/2018-11-15/calibration.json",

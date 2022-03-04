@@ -7,6 +7,7 @@ import sys
 import numpy as np
 import torch
 import nvdiffrast.torch as dr
+from PIL import Image
 import imageio
 
 # local
@@ -24,7 +25,7 @@ def render(glctx, mtx, pos, pos_idx, vtx_col, col_idx, resolution: int):
     color       = dr.antialias(color, rast_out, pos_clip, pos_idx)
     return color
 
-def fit_mesh(max_iter, lr_base, lr_ramp, meshdata, display_interval):
+def fit_mesh(max_iter, lr_base, lr_ramp, meshdata, display_interval, imdir, calibs):
     # create tensors? or do this already in data through parameter meshdata
     tex = meshdata.tex
     vtx = meshdata.vtx
@@ -36,42 +37,52 @@ def fit_mesh(max_iter, lr_base, lr_ramp, meshdata, display_interval):
     # context
     glctx = dr.RasterizeGLContext()
 
-    gl_avg = []
-
     optimizer = torch.optim.Adam([tex_opt], lr=lr_base)
     # scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer, lr_lambda=lambda x: lr_ramp**(float(x)/float(max_iter)))
 
-    # render
-    for it in range(max_iter + 1):
+    cams = os.listdir(imdir)
+    for cam in cams:
+        # get camera calibration
+        calib = calibs[cam.split("_")[1]]
+        intr = calib['intrinsic']
+        dist = calib['distortion']
+        rot = calib['rotation']
+        trans = calib['translation']
 
-        # projection
+        camdir = os.path.join(imdir, cam)
+        frames = os.listdir(camdir)
+        for frame in frames:
+            # reference image to render against
+            img = np.array(Image.open(os.path.join(camdir, frame)))
+            colour = torch.from_numpy(img).cuda()
 
-        # Compute geometric error
-        with torch.no_grad():
-            geom_loss = torch.mean(torch.sum((torch.abs(vtx_pos_opt) - .5) ** 2, dim=1) ** 0.5)
-            gl_avg.append(float(geom_loss))
+            # render
+            for it in range(max_iter + 1):
 
-        # render
-        color = render(glctx, r_mvp, vtx_pos, pos_idx, vtx_col, col_idx, resolution)
-        color_opt = render(glctx, r_mvp, vtx_pos_opt, pos_idx, vtx_col_opt, col_idx, resolution)
+                # projection
+                r_mv = np.asarray(calib['rotation'])
 
-        # Compute loss and train.
-        loss = torch.mean((color - color_opt) ** 2)  # L2 pixel loss.
-        optimizer.zero_grad()
-        loss.backward()
-        optimizer.step()
-        # scheduler.step()
+                # render
+                color = render(glctx, r_mvp, vtx_pos, pos_idx, vtx_col, col_idx, resolution)
+                color_opt = render(glctx, r_mvp, vtx_pos_opt, pos_idx, vtx_col_opt, col_idx, resolution)
 
-        # Show/save image.
-        display_image = display_interval and (it % display_interval == 0)
-        if display_image:
-            img_b = color[0].cpu().numpy()
-            img_o = color_opt[0].detach().cpu().numpy()
-            img_d = render(glctx, a_mvp, vtx_pos_opt, pos_idx, vtx_col_opt, col_idx, display_res)[0]
-            img_r = render(glctx, a_mvp, vtx_pos, pos_idx, vtx_col, col_idx, display_res)[0]
+                # Compute loss and train.
+                loss = torch.mean((color - color_opt) ** 2)  # L2 pixel loss.
+                optimizer.zero_grad()
+                loss.backward()
+                optimizer.step()
+                # scheduler.step()
 
-            scl = display_res // img_o.shape[0]
-            img_b = np.repeat(np.repeat(img_b, scl, axis=0), scl, axis=1)
-            img_o = np.repeat(np.repeat(img_o, scl, axis=0), scl, axis=1)
-            result_image = make_grid(np.stack([img_o, img_b, img_d.detach().cpu().numpy(), img_r.cpu().numpy()]))
-            utils.display_image(result_image, size=display_res, title='%d / %d' % (it, max_iter))
+                # Show/save image.
+                display_image = display_interval and (it % display_interval == 0)
+                if display_image:
+                    img_b = color[0].cpu().numpy()
+                    img_o = color_opt[0].detach().cpu().numpy()
+                    img_d = render(glctx, a_mvp, vtx_pos_opt, pos_idx, vtx_col_opt, col_idx, display_res)[0]
+                    img_r = render(glctx, a_mvp, vtx_pos, pos_idx, vtx_col, col_idx, display_res)[0]
+
+                    scl = display_res // img_o.shape[0]
+                    img_b = np.repeat(np.repeat(img_b, scl, axis=0), scl, axis=1)
+                    img_o = np.repeat(np.repeat(img_o, scl, axis=0), scl, axis=1)
+                    result_image = make_grid(np.stack([img_o, img_b, img_d.detach().cpu().numpy(), img_r.cpu().numpy()]))
+                    utils.display_image(result_image, size=display_res, title='%d / %d' % (it, max_iter))
