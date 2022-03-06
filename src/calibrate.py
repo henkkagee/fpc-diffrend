@@ -6,6 +6,19 @@ import json
 
 # ------------------------------------------------------------------------
 
+def changeCamName(camname):
+    """
+    Change camera names to match actual image data.
+
+    :param camname: camera name with "bottom", "top" or "colour"
+    :return:
+    """
+    realcamname = camname.replace("bottom", "primary")
+    realcamname = realcamname.replace("top", "secondary")
+    return realcamname.replace("colour", "texture")
+
+# ------------------------------------------------------------------------
+
 
 def calibrate(objpoints, imgpoints, img):
     """
@@ -21,7 +34,6 @@ def calibrate(objpoints, imgpoints, img):
     assert imgpoints.shape[0] == objpoints.shape[0]
     assert img is not None
     ret, mtx, dist, rvecs, tvecs = cv2.calibrateCamera(objpoints, imgpoints, img.shape[::-1], None, None)
-    print(f"success? {ret}")
     print(f"mtx: {mtx}")
     print(f"dist: {dist}")
     print(f"rvecs: {rvecs[0]}")
@@ -69,9 +81,7 @@ for fname in images:
     # assume images are processed in camera order
     if camname != prevcamname:
         # all (9) images from one camera have been processed
-        realcamname = prevcamname.replace("bottom", "primary")
-        realcamname = realcamname.replace("top", "secondary")
-        realcamname = realcamname.replace("colour", "texture")
+        realcamname = changeCamName(prevcamname)
         calibdict[realcamname] = calibrate(objpoints, imgpoints, img)
         imgpoints = []
 
@@ -85,7 +95,7 @@ for fname in images:
 
     # Find the circle centers
     # treat pod1bottom_0009 separately as it's tricky to automatically detect due to angle
-    # EDIT: one could also do blobDetector.detect() and drawKeypoints() before findCirclesGrid() for easier detection
+    # TODO: one could also do blobDetector.detect() and drawKeypoints() before findCirclesGrid() for easier detection
     if "pod1bottom_0009" in fname:
         ret, centers = cv2.findCirclesGrid(img, np.asarray([10, 10]),
                                            blobDetector=blobdetector,
@@ -104,9 +114,7 @@ for fname in images:
 
     prevcamname = camname
 
-realcamname = prevcamname.replace("bottom", "primary")
-realcamname = realcamname.replace("top", "secondary")
-realcamname = realcamname.replace("colour", "texture")
+realcamname = changeCamName(prevcamname)
 calibdict[realcamname] = calibrate(objpoints, imgpoints, img)
 
 # save calibration file

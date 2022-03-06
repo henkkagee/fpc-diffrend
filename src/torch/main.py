@@ -4,10 +4,10 @@ import os
 # 3rd party
 import numpy as np
 
-# custom
-from data import MeshData
-import dr
-import camera as c
+# local
+from src.torch.data import MeshData
+import fit
+import camera
 
 # ------------------------------------------------------------
 
@@ -27,28 +27,10 @@ def run(mdir, nbl, bmesh, imdir, it, calib):
     bm_vtx = np.asarray(bm.vertices)
     bm_tri = np.asarray(bm.faces)
 
-    # images
-    # imgs[range][pos][1-3][img] ?
-    imgs = []
-
-    proj = c.Projection()
-
-    for range in os.listdir(imdir):
-        for cam in os.listdir(range):
-            if "top" in cam:
-                if "pod2" in cam:
-                    proj.extrinsic =
-                    proj.distortion =
-                    proj.intrinsic = 
-            elif "bottom" in cam:
-                pass
-            elif "colour" in cam:
-                pass
-
     # setup
 
     # dr
-    fit_mesh()
+    fit.fitTake()
 
 # -----------------------------------------------------------
 

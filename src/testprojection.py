@@ -1,5 +1,5 @@
 import cv2
-from data import MeshData
+from torch.data import MeshData
 import numpy as np
 import json
 
@@ -19,8 +19,7 @@ def pointProjectionTest():
            [-2.954, -0.328, 15.730], [2.954, -0.328, 15.730]]
     objectPoints = np.asarray(obj, dtype=np.float64)
 
-    cameraMatrix = np.asarray([[35, 0, 800], [0, 35, 600], [0, 0, 1]], dtype=np.float64)
-    # cameraMatrix = np.asarray([[6769.82, 0, 701.915], [0, 6782.57, 495.164], [0, 0, 1]], dtype=np.float64)
+    cameraMatrix = np.asarray([[6769.82, 0, 701.915], [0, 6782.57, 495.164], [0, 0, 1]], dtype=np.float64)
     print(cameraMatrix)
     rmat = np.asarray([[0.9998071, -0.0055418, -0.0188460],
             [-0.0054683, -0.9999773,  0.0039444],

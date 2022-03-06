@@ -1,9 +1,14 @@
 import numpy as np
 
-class MeshData():
+# -------------------------------------------------------------
 
+
+class MeshData:
+    """
+    Convenience class for reading Wavefront .obj files.
+
+    """
     def __init__(self, obj):
-
         vertices = []
         uv = []
         faces = []
@@ -23,8 +28,8 @@ class MeshData():
                 elif line.startswith("f "):
                     idxs = [l.split("/") for l in line.strip().split(" ")[1:]]
                     assert len(idxs) == 3
-                    faces.extend([x[0] for x in idxs])
-                    fuv.extend([x[1] for x in idxs])
+                    faces.append([x[0] for x in idxs])
+                    fuv.append([x[1] for x in idxs])
 
         self.vertices = np.asarray(vertices)
         self.uv = np.asarray(uv)
