@@ -1,2 +1,2 @@
 # fpc-diffrend
-Facial Performance Capture through Differential Rendering
+Facial Performance Capture through Differentiable Rendering
