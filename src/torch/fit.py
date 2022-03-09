@@ -34,6 +34,25 @@ def assertNumFrames(cams, imdir):
 # -----------------------------------------------------------------
 
 
+def blend(v_base, maps, dataset, frames):
+    """
+    Get blended vertex positions as in rig eq.
+
+    :param v_base: Base mesh vertex positions of shape [3*v], (x,y,z,x,...)
+    :param maps: Dict of mappings, one mapping for each dataset: local, global, pca
+    :param dataset: Dict of datasets (blendshapes): local, global, pca
+    :param frames: One-hot vector of frame index, with value at frame i being 1.
+    :return: Blended mesh vertex positions of shape [3*v], (x,y,z,x,...)
+    """
+    if 'global' not in dataset:
+        mapped = torch.matmul(maps['local'], frames)
+        bl_res = torch.matmul(dataset['local'], mapped)
+        vtx_pos = torch.add(v_base, bl_res)
+        return vtx_pos
+
+# -----------------------------------------------------------------
+
+
 def render(glctx, mtx, pos, pos_idx, uv, uv_idx, tex, resolution, enable_mip, max_mip_level):
     """
     Render object using Nvdiffrast
@@ -96,13 +115,18 @@ def fitTake(max_iter, lr_base, lr_ramp, basemesh, localbl, globalbl, display_int
     uv_idx = torch.tensor(basemesh.fuv, dtype=torch.float32, device='cuda')
     tex = torch.full(uv.shape, 0.2, device='cuda', requires_grad=True)
     pos_idx = torch.tensor(basemesh.faces, dtype=torch.int32, device='cuda')
+
     # blendshapes and mappings
     if globalbl:
         raise Exception("Blending global blendshapes from ml dataset caches not yet implemented")
+    dataset = {}
     m_3vb = torch.tensor(localbl, dtype=torch.float32, device='cuda')
+    dataset['local'] = m_3vb
     m_bf_face = torch.tensor(np.empty((localbl.shape[0], n_frames)), dtype=torch.float32,
                              device='cuda', requires_grad=True)
-    v_f = torch.zeros((n_frames))
+    maps = {}
+    maps['local'] = m_bf_face
+    v_f = torch.zeros(n_frames)
 
     # context and optimizer
     glctx = dr.RasterizeGLContext()
@@ -124,18 +148,21 @@ def fitTake(max_iter, lr_base, lr_ramp, basemesh, localbl, globalbl, display_int
             img = np.array(Image.open(os.path.join(camdir, frame)))
             ref = torch.from_numpy(img).cuda()
 
+            # set one-hot frame index
+            framenum = os.path.splitext(frame)[0].split("_")[-1]
+            v_f[framenum] = 1
+
             # render
             for it in range(max_iter + 1):
                 # modelview and projection
-                # TODO: how to incorporate camera distortion parameters? in shaders?
+                # TODO: how to incorporate camera distortion parameters in projection? in shaders?
+                # lens distortion currently handled as preprocess in reference images
                 projection = camera.intrinsicToProjection(intr)
                 modelview = camera.extrinsicToModelview(rot, trans)
                 mvp = np.matmul(projection, modelview).astype(np.float32)
 
                 # get blended vertex positions according to eq.
-                mapped = torch.matmul(m_bf_face, v_f)
-                bl_res = torch.matmul(m_3vb, mapped)
-                vtx_pos = torch.add(v_base, bl_res)
+                vtx_pos = blend(v_base, maps, dataset, v_f)
 
                 # render
                 colour = render(glctx, mvp, vtx_pos, pos_idx, uv, uv_idx, tex, img.shape[::-1], enable_mip, max_mip_level)
@@ -153,3 +180,4 @@ def fitTake(max_iter, lr_base, lr_ramp, basemesh, localbl, globalbl, display_int
                 if display_image:
                     img_out = colour[0].cpu().numpy()
                     utils.display_image(img_out, size=img.shape[::-1])
+            v_f[framenum] = 0
