@@ -100,7 +100,7 @@ def fitTake(max_iter, lr_base, lr_ramp, basemesh, localbl, globalbl, display_int
     :param globalbl: Matrix of global blendshapes of shape num_globalbls*3v
     :param display_interval: Epoch interval for displaying render previews
     :param imdir: Image directory to take with structure take/camera/frame
-    :param calibs: Camera calibration file for take in question
+    :param calibs: Camera calibration dict from calibration file for take in question
     :param enable_mip: Boolean whether to enable mipmapping
     :param max_mip_level: Limits the number of mipmaps constructed and used in mipmap-based filter modes
     :return:
@@ -152,15 +152,15 @@ def fitTake(max_iter, lr_base, lr_ramp, basemesh, localbl, globalbl, display_int
             framenum = os.path.splitext(frame)[0].split("_")[-1]
             v_f[framenum] = 1
 
+            # modelview and projection
+            # TODO: how to incorporate camera distortion parameters in projection? in shaders?
+            # lens distortion currently handled as preprocess in reference images
+            projection = camera.intrinsicToProjection(intr)
+            modelview = camera.extrinsicToModelview(rot, trans)
+            mvp = np.matmul(projection, modelview).astype(np.float32)
+
             # render
             for it in range(max_iter + 1):
-                # modelview and projection
-                # TODO: how to incorporate camera distortion parameters in projection? in shaders?
-                # lens distortion currently handled as preprocess in reference images
-                projection = camera.intrinsicToProjection(intr)
-                modelview = camera.extrinsicToModelview(rot, trans)
-                mvp = np.matmul(projection, modelview).astype(np.float32)
-
                 # get blended vertex positions according to eq.
                 vtx_pos = blend(v_base, maps, dataset, v_f)
 

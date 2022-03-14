@@ -3,6 +3,7 @@ import cv2
 import numpy as np
 import codecs
 import json
+from pathlib import Path
 
 # ------------------------------------------------------------------------
 
@@ -71,9 +72,11 @@ calibdict = {}
 imgpoints = []  # 2d points in image plane.
 img = None
 prevcamname = "pod1bottom"
-path = "C:/Users/Henkka/Projects/invrend-fpc/data/calibration/2018-11-15/extracted"
+# path = "C:/Users/Henkka/Projects/invrend-fpc/data/calibration/2018-11-15/extracted"
+path = r"\\rmd.remedy.fi\Capture\System\RAW\Calibrations\2021-12-07"
 images = os.listdir(path)
 
+# for root, dirs, files in os.walk(path):
 for fname in images:
     camname = fname.split("_")[0]
     print(f"cam: {fname}")

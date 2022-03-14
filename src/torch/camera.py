@@ -6,7 +6,7 @@ import torch
 # ------------------------------------------------------------------------------------
 
 
-def transform_clip(mvp, pos):
+def transformClip(mvp, pos):
     """
     Transform vertex coordinates to clip space.
 
@@ -48,3 +48,6 @@ def extrinsicToModelview(rmat, tvec):
     :return: 4x4 modelview matrix
     """
     return np.r_[np.c_[rmat, tvec], np.array([0, 0, 0, 1], dtype=np.float32)]
+
+# ------------------------------------------------------------------------------------
+
