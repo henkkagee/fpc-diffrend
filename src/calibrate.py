@@ -32,6 +32,7 @@ def calibrate(objpoints, imgpoints, img):
     :return:
     """
     imgpoints = np.asarray(imgpoints, dtype=np.float32)
+    # print(f"imgpoints ({imgpoints.shape}) --- objpoints ({objpoints.shape})")
     assert imgpoints.shape[0] == objpoints.shape[0]
     assert img is not None
     ret, mtx, dist, rvecs, tvecs = cv2.calibrateCamera(objpoints, imgpoints, img.shape[::-1], None, None)
@@ -71,10 +72,14 @@ blobdetector = cv2.SimpleBlobDetector_create(params)
 calibdict = {}
 imgpoints = []  # 2d points in image plane.
 img = None
-prevcamname = "pod1bottom"
+prevcamname = "pod1primary"
 # path = "C:/Users/Henkka/Projects/invrend-fpc/data/calibration/2018-11-15/extracted"
-path = r"\\rmd.remedy.fi\Capture\System\RAW\Calibrations\2021-12-07"
+path = "C:/Users/Henkka/Projects/invrend-fpc/data/calibration/2021-07-01"
+# path = r"\\rmd.remedy.fi\Capture\System\RAW\Calibrations\2021-12-07"
 images = os.listdir(path)
+
+# different threshold values to try to account for reflections in the calibration target
+thresholds = [190, 200, 210, 220, 230, 240, 250, 180, 170, 160, 150, 140]
 
 # for root, dirs, files in os.walk(path):
 for fname in images:
@@ -93,18 +98,23 @@ for fname in images:
     img = cv2.imread(f"{path}/{fname}",flags=cv2.IMREAD_GRAYSCALE)
     img = cv2.bitwise_not(img)
     kernel = np.ones((5, 5), np.float32) / 25
-    img = cv2.filter2D(img, -1, kernel)
-    ret, img = cv2.threshold(img, 190, 255, cv2.THRESH_BINARY)
+    preimg = cv2.filter2D(img, -1, kernel)
 
     # Find the circle centers
-    # treat pod1bottom_0009 separately as it's tricky to automatically detect due to angle
     # TODO: one could also do blobDetector.detect() and drawKeypoints() before findCirclesGrid() for easier detection
-    if "pod1bottom_0009" in fname:
-        ret, centers = cv2.findCirclesGrid(img, np.asarray([10, 10]),
+    for thres in thresholds:
+        ret, img = cv2.threshold(preimg, thres, 255, cv2.THRESH_BINARY)
+        cv2.imshow('thresh', img)
+        cv2.waitKey(200)
+        ret, centers = cv2.findCirclesGrid(img, np.asarray([10, 10]))
+
+        if not ret:
+            ret, centers = cv2.findCirclesGrid(img, np.asarray([10, 10]),
                                            blobDetector=blobdetector,
                                            flags=cv2.CALIB_CB_SYMMETRIC_GRID | cv2.CALIB_CB_CLUSTERING)
-    else:
-        ret, centers = cv2.findCirclesGrid(img, np.asarray([10, 10]))
+        if ret:
+            break
+
 
     # If found, add center points and draw them
     if ret:
@@ -113,7 +123,8 @@ for fname in images:
         cv2.imshow('img', img)
         cv2.waitKey(200)
     else:
-        raise Exception(f"No centers found for image {path}/{fname}")
+        # raise Exception(f"No centers found for image {path}/{fname}")
+        print(f"No centers found for image {path}/{fname}")
 
     prevcamname = camname
 
@@ -121,7 +132,7 @@ realcamname = changeCamName(prevcamname)
 calibdict[realcamname] = calibrate(objpoints, imgpoints, img)
 
 # save calibration file
-json.dump(calibdict, codecs.open("C:/Users/Henkka/Projects/invrend-fpc/data/calibration/2018-11-15/calibration.json",
+json.dump(calibdict, codecs.open("C:/Users/Henkka/Projects/invrend-fpc/data/calibration/2021-07-01/calibration.json",
                                  'w', encoding='utf-8'),
           separators=(',', ':'),
           sort_keys=True,
