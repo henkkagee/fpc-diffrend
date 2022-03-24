@@ -69,7 +69,7 @@ def render(glctx, mtx, pos, pos_idx, uv, uv_idx, tex, resolution, enable_mip, ma
     :param max_mip_level: Limits the number of mipmaps constructed and used in mipmap-based filter modes.
     :return:
     """
-    pos_clip = camera.transform_clip(mtx, pos)
+    pos_clip = camera.transformClip(mtx, pos)
     rast_out, rast_out_db = dr.rasterize(glctx, pos_clip, pos_idx, resolution=[resolution, resolution])
 
     if enable_mip:
@@ -87,7 +87,7 @@ def render(glctx, mtx, pos, pos_idx, uv, uv_idx, tex, resolution, enable_mip, ma
 
 
 def fitTake(max_iter, lr_base, lr_ramp, basemesh, localbl, globalbl, display_interval, imdir, calibs, enable_mip,
-            max_mip_level):
+            max_mip_level, texshape):
     """
     Fit one take (continuous range of frames).
 
@@ -103,6 +103,7 @@ def fitTake(max_iter, lr_base, lr_ramp, basemesh, localbl, globalbl, display_int
     :param calibs: Camera calibration dict from calibration file for take in question
     :param enable_mip: Boolean whether to enable mipmapping
     :param max_mip_level: Limits the number of mipmaps constructed and used in mipmap-based filter modes
+    :param texshape: Shape of the texture with resolution and channels (height, width, channels)
     :return:
     """
     cams = os.listdir(imdir)
@@ -113,7 +114,8 @@ def fitTake(max_iter, lr_base, lr_ramp, basemesh, localbl, globalbl, display_int
     v_base = torch.tensor(basemesh.vtx, dtype=torch.float32, device='cuda')
     uv = torch.tensor(basemesh.uv, dtype=torch.float32, device='cuda')
     uv_idx = torch.tensor(basemesh.fuv, dtype=torch.float32, device='cuda')
-    tex = torch.full(uv.shape, 0.2, device='cuda', requires_grad=True)
+    tex = np.random.uniform(low=0.0, high=255.0, size=texshape)
+    tex_opt = torch.tensor(tex, dtype=torch.float32, device='cuda', requires_grad=True)
     pos_idx = torch.tensor(basemesh.faces, dtype=torch.int32, device='cuda')
 
     # blendshapes and mappings
@@ -137,7 +139,7 @@ def fitTake(max_iter, lr_base, lr_ramp, basemesh, localbl, globalbl, display_int
         # get camera calibration
         calib = calibs[cam.split("_")[1]]
         intr = np.asarray(calib['intrinsic'], dtype=np.float32)
-        dist = np.asarray(calib['distortion'], dtype=np.float32)
+        # dist = np.asarray(calib['distortion'], dtype=np.float32)
         rot = np.asarray(calib['rotation'], dtype=np.float32)
         trans = np.asarray(calib['translation'], dtype=np.float32)
 
@@ -163,9 +165,11 @@ def fitTake(max_iter, lr_base, lr_ramp, basemesh, localbl, globalbl, display_int
             for it in range(max_iter + 1):
                 # get blended vertex positions according to eq.
                 vtx_pos = blend(v_base, maps, dataset, v_f)
+                # split [n_vertices * 3] to [n_vertices, 3] as a view of the original tensor
+                vtx_pos_split = torch.reshape(vtx_pos, (vtx_pos.shape[0] // 3, 3))
 
                 # render
-                colour = render(glctx, mvp, vtx_pos, pos_idx, uv, uv_idx, tex, img.shape[::-1], enable_mip, max_mip_level)
+                colour = render(glctx, mvp, vtx_pos_split, pos_idx, uv, uv_idx, tex, img.shape[::-1], enable_mip, max_mip_level)
 
                 # Compute loss and train.
                 # TODO: add activation constraints (L1 sparsity)

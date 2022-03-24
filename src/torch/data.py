@@ -18,20 +18,20 @@ class MeshData:
             for line in lines:
                 # vertex positions
                 if line.startswith("v "):
-                    vertices.extend([float(x) for x in line.strip().split(" ")[1:]])
+                    vertices.append([float(x) for x in line.strip().split(" ")[1:]])
 
                 # texture coordinates
                 if line.startswith("vt "):
-                    uv.extend([float(x) for x in line.strip().split(" ")[1:]])
+                    uv.append([float(x) for x in line.strip().split(" ")[1:]])
 
                 # triangles and face-uv mapping
                 elif line.startswith("f "):
                     idxs = [l.split("/") for l in line.strip().split(" ")[1:]]
                     assert len(idxs) == 3
-                    faces.append([x[0] for x in idxs])
-                    fuv.append([x[1] for x in idxs])
+                    faces.append([int(x[0]) for x in idxs])
+                    fuv.append([int(x[1]) for x in idxs])
 
-        self.vertices = np.asarray(vertices)
-        self.uv = np.asarray(uv)
-        self.faces = np.asarray(faces)
-        self.fuv = np.asarray(fuv)
+        self.vertices = np.asarray(vertices, dtype=np.float32)
+        self.uv = np.asarray(uv, dtype=np.float32)
+        self.faces = np.asarray(faces, dtype=np.int32)
+        self.fuv = np.asarray(fuv, dtype=np.int32)

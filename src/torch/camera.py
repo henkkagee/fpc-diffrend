@@ -21,7 +21,7 @@ def transformClip(mvp, pos):
 
 # ------------------------------------------------------------------------------------
 
-def intrinsicToProjection(intr, zn=0.1, zf=100):
+def intrinsicToProjection(intr, zn=0.01, zf=1000):
     """
     Get OpenGL projection matrix from intrinsic camera parameters.
 
@@ -31,6 +31,14 @@ def intrinsicToProjection(intr, zn=0.1, zf=100):
     :param zf: Distance to back clipping plane
     :return: 4x4 projection matrix
     """
+    n = 1.0
+    x = 0.1
+    f = 100.0
+    return np.array([[n/x,    0,            0,              0],
+                     [  0, n/-x,            0,              0],
+                     [  0,    0, -(f+n)/(f-n), -(2*f*n)/(f-n)],
+                     [  0,    0,           -1,              0]]).astype(np.float32)
+
     return np.array([[(2 * intr[0,0])/(2 * intr[0,2]), 0, 0, 0],
                      [0, (2 * intr[1,1])/(2 * intr[1,2]), 0, 0],
                      [0, 0, -(zf + zn) / (zf - zn), -(2 * zf * zn) / (zf - zn)],
@@ -47,7 +55,28 @@ def extrinsicToModelview(rmat, tvec):
     :param tvec: 1x3 camera translation matrix w.r.t world origin
     :return: 4x4 modelview matrix
     """
-    return np.r_[np.c_[rmat, tvec], np.array([0, 0, 0, 1], dtype=np.float32)]
+
+    return np.array([[1,  0, 0, 0],
+                     [0,  -1, 0, 0],
+                     [0, 0, -1, -30],
+                     [0,  0, 0, 1]]).astype(np.float32)
+
+    rt = np.append(rmat, tvec, axis=1)
+    br = np.array([0, 0, 0, 1], dtype=np.float32)
+    mdv = np.vstack((rt, br))
+    """mdv[0, 1] *= -1
+    mdv[0, 2] *= -1
+    mdv[1, 0] *= -1
+    mdv[2, 0] *= -1"""
+    """mdv[1, 0] *= -1
+    mdv[1, 1] *= -1
+    mdv[1, 2] *= -1
+    mdv[2, 0] *= -1
+    mdv[2, 1] *= -1
+    mdv[2, 2] *= -1
+    mdv[1, 3] *= -1
+    mdv[2, 3] *= -1"""
+    return mdv
 
 # ------------------------------------------------------------------------------------
 
