@@ -16,7 +16,7 @@ import nvdiffrast.torch as dr
 # --------------------------------------------------------------------------------
 
 
-def assertNumFrames(cams, imdir):
+def assert_num_frames(cams, imdir):
     """
     Get number of frames outside optimization loop to init tensors and make sure each camera has the
     same number of frames
@@ -36,21 +36,19 @@ def assertNumFrames(cams, imdir):
 
 
 def render(glctx, mtx, pos, pos_idx, uv, uv_idx, tex, resolution: tuple):
-    pos_clip = camera.transformClip(mtx, pos)
+    pos_clip = camera.transform_clip(mtx, pos)
     rast_out, rast_out_db = dr.rasterize(glctx, pos_clip, pos_idx, resolution=(resolution[0], resolution[1]))
 
     texc, texd = dr.interpolate(uv[None, ...], rast_out, uv_idx, rast_db=rast_out_db, diff_attrs='all')
     colour = dr.texture(tex[None, ...], texc, texd, filter_mode='linear-mipmap-linear', max_mip_level=8)
 
     colour = dr.antialias(colour, rast_out, pos_clip, pos_idx)
-
-    colour = colour * torch.clamp(rast_out[..., -1:], 0, 1)  # Mask out background.
     return colour[0]
 
 # --------------------------------------------------------------------------------
 
 
-def makeImg(arr, ncols=2):
+def make_img(arr, ncols=2):
     n, height, width, nc = arr.shape
     nrows = n//ncols
     assert n == nrows*ncols
@@ -59,7 +57,7 @@ def makeImg(arr, ncols=2):
 # --------------------------------------------------------------------------------
 
 
-def fitCube(max_iter          = 5000,
+def fit_cube(max_iter          = 5000,
              resolution        = (1600, 1200),
              log_interval      = 10,
              display_interval  = None,
@@ -70,8 +68,25 @@ def fitCube(max_iter          = 5000,
              imdir             = "",
              calibs            = dict(),
              texpath = None):
+    """
+    Fit the geometry of a cube of known dimensions and appearance to reference photos
+    in order to validate camera parameters.
 
-    mp4save_interval = 1
+    :param max_iter:
+    :param resolution:
+    :param log_interval:
+    :param display_interval:
+    :param display_res:
+    :param out_dir:
+    :param log_fn:
+    :param basemeshpath:
+    :param imdir:
+    :param calibs:
+    :param texpath:
+    :return:
+    """
+
+    mp4save_interval = 10
 
     # Set up logging.
     if out_dir:
@@ -83,7 +98,7 @@ def fitCube(max_iter          = 5000,
         print ('No output directory specified, not saving log or images')
 
     cams = os.listdir(imdir)
-    n_frames = assertNumFrames(cams, imdir)
+    n_frames = assert_num_frames(cams, imdir)
 
     gl_avg = []
     log_file = None
@@ -93,19 +108,25 @@ def fitCube(max_iter          = 5000,
             log_file = open(f'{out_dir}/{log_fn}', 'wt')
 
     rubiks = data.MeshData(basemeshpath)
+
     vtxp = torch.tensor(rubiks.vertices, dtype=torch.float32, device='cuda')
     # vtxp_opt = torch.tensor(np.zeros(shape=rubiks.vertices.shape), dtype=torch.float32,
                            # device='cuda', requires_grad=True)
-    vtxp_opt = torch.tensor(rubiks.vertices, dtype=torch.float32,
-                            device='cuda', requires_grad=True)
+    # vtxp_opt = torch.tensor(rubiks.vertices, dtype=torch.float32,
+                            # device='cuda', requires_grad=True)
     pos_idx = torch.tensor(rubiks.faces, dtype=torch.int32, device='cuda')
     uv_idx = torch.tensor(rubiks.fuv, dtype=torch.int32, device='cuda')
     uv = torch.tensor(rubiks.uv, dtype=torch.float32, device='cuda')
-    texture = np.array(Image.open(texpath))
+    texture = np.array(Image.open(texpath))/255.0
     tex = torch.tensor(texture, dtype=torch.float32, device='cuda')
 
+    rotx_opt = torch.tensor(camera.rotate_x(1.0), dtype=torch.float32, device='cuda', requires_grad=True)
+    roty_opt = torch.tensor(camera.rotate_y(1.0), dtype=torch.float32, device='cuda', requires_grad=True)
+    trans_opt = torch.tensor(camera.translate(1.0, 1.0, 1.0), dtype=torch.float32, device='cuda', requires_grad=True)
+    scale_opt = torch.tensor(np.array(1.0), dtype=torch.float32, device='cuda', requires_grad=True)
+
     glctx = dr.RasterizeGLContext()
-    optimizer = torch.optim.Adam([vtxp_opt], lr=1e-2)
+    optimizer = torch.optim.Adam([rotx_opt, roty_opt, trans_opt, scale_opt], lr=1e-2)
     scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer, lr_lambda=lambda x: max(0.01, 10 ** (-x * 0.0005)))
 
     for cam in cams:
@@ -124,16 +145,16 @@ def fitCube(max_iter          = 5000,
         for frame in frames:
             # reference image to render against
             img = np.array(Image.open(os.path.join(camdir, frame)))
-            ref = torch.from_numpy(img).cuda()
+            ref = torch.from_numpy(np.flip(img, 1).copy()).cuda()
 
-            # lens distortion currently handled as preprocess in reference images
-            projection = camera.intrinsicToProjection(intr)
-            modelview = camera.extrinsicToModelview(rot, trans)
-            mvp = np.matmul(projection, modelview).astype(np.float32)
+            # lens distortion handled as preprocess in reference images
+            projection = torch.tensor(camera.intrinsic_to_projection(intr), dtype=torch.float32, device='cuda')
+            modelview = torch.tensor(camera.extrinsic_to_modelview(rot, trans), dtype=torch.float32, device='cuda')
 
             for it in range(max_iter + 1):
                 # rotation/translation matrix for offsetting object so that it matches the image
                 # camera distortion is handled as preprocessing step on the reference images
+                vtxp_opt = torch.mul(vtxp, scale_opt)
 
                 # geometric error
                 with torch.no_grad():
@@ -154,30 +175,32 @@ def fitCube(max_iter          = 5000,
                 # vtxp_split = torch.reshape(vtxp, (vtxp.shape[0] // 3, 3))
                 # vtxp_opt_split = torch.reshape(vtxp_opt, (vtxp_opt.shape[0]//3, 3))
 
+                t_rot_mv = torch.matmul(rotx_opt, roty_opt)
+                t_rot_mv = torch.matmul(trans_opt, t_rot_mv)
+                t_rot_mv = torch.matmul(projection, t_rot_mv)
+                mvp = torch.matmul(projection, modelview).cuda()
+
                 # render
                 colour = render(glctx, mvp, vtxp_opt, pos_idx, uv, uv_idx, tex, resolution)
 
                 # Compute loss and train.
-                # print(f"ref: {ref.shape} --- colour: {colour.shape}")
-
-                loss = torch.mean((ref - colour) ** 2)  # L2 pixel loss.
+                loss = torch.mean((ref - (colour*255)) ** 2)  # L2 pixel loss.
                 optimizer.zero_grad()
                 loss.backward()
                 optimizer.step()
                 scheduler.step()
 
                 display_image = display_interval and (it % display_interval == 0)
-                save_mp4 = mp4save_interval and (it % mp4save_interval == 0)
+                # save_mp4 = mp4save_interval and (it % mp4save_interval == 0)
+                if display_image: # or save_mp4:
+                    img_ref = ref.cpu().numpy()/255
+                    img_ref = np.array(img_ref.copy(), dtype=np.float32)
+                    img_col = np.flip(colour.cpu().detach().numpy(), 1)
 
-                if display_image or save_mp4:
-                    img_ref = ref.cpu().numpy()  # [::-1]
-                    img_col = colour.detach().cpu().numpy()  # [::-1]
-
-                    # scl = display_res // img_o.shape[0]
-                    # result_image = makeImg(np.stack([img_ref, img_col]))
-                    utils.display_image(img_col, size=display_res)
-                    if save_mp4:
-                        writer.append_data(np.clip(np.rint(img_col * 255.0), 0, 255).astype(np.uint8))
+                    result_image = make_img(np.stack([img_ref, img_col]))
+                    utils.display_image(result_image, size=display_res)
+                    # if save_mp4:
+                        # writer.append_data(np.clip(np.rint(img_col * 255.0), 0, 255).astype(np.uint8))
 
     if writer is not None:
         writer.close()
@@ -195,17 +218,18 @@ def main():
         calibs = json.load(json_file)
 
     # Run
-    fitCube(
-        max_iter=300,
+    fit_cube(
+        max_iter=10000,
         resolution=(1600, 1200),
         log_interval=100,
-        display_interval=1,
+        display_interval=10,
+        display_res=1024,
         out_dir=r"C:\Users\Henkka\Projects\invrend-fpc\data\cube\out_img",
         log_fn='log.txt',
         basemeshpath=r"C:\Users\Henkka\Projects\invrend-fpc\data\cube\rubiks_bl.obj",
         imdir=r"C:\Users\Henkka\Projects\invrend-fpc\data\cube\20220310\neutrals\rubik_cube\neutral\take0001\fullres",
         calibs=calibs,
-        texpath=r"C:\Users\Henkka\Projects\invrend-fpc\data\cube\text.png"
+        texpath=r"C:\Users\Henkka\Projects\invrend-fpc\data\cube\rubiks.png"
     )
 
 #----------------------------------------------------------------------------

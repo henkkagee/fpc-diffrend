@@ -3,21 +3,29 @@ import OpenGL.GL as gl
 import glfw
 from PIL import Image
 
-_glfw_window = None
+# _glfw_window = None
 
 # ----------------------------------------------------------------------
 
 
-def display_image(image, size=None):
-    """
-    Display image using OpenGL.
+_glfw_window = None
+def display_image(image, zoom=None, size=None, title=None): # HWC
+    # Import OpenGL and glfw.
+    import OpenGL.GL as gl
+    import glfw
 
-    :param image:
-    :param size:
-    :return:
-    """
+    # Zoom image if requested.
+    image = np.asarray(image)
+    if size is not None:
+        assert zoom is None
+        zoom = max(1, size // image.shape[0])
+    if zoom is not None:
+        image = image.repeat(zoom, axis=0).repeat(zoom, axis=1)
     height, width, channels = image.shape
-    title = 'Render preview'
+
+    # Initialize window.
+    if title is None:
+        title = 'Debug window'
     global _glfw_window
     if _glfw_window is None:
         glfw.init()
