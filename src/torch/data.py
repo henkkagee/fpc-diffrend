@@ -16,9 +16,9 @@ class MeshData:
         with open(obj, "r") as f:
             lines = f.readlines()
             for line in lines:
-                # vertex positions
+                # vertex positions x,y,z,x,...,z
                 if line.startswith("v "):
-                    vertices.append([float(x) for x in line.strip().split(" ")[1:]])
+                    vertices.extend([float(x) for x in line.strip().split(" ")[1:]])
 
                 # texture coordinates
                 elif line.startswith("vt "):

@@ -1,46 +1,27 @@
-# builtin
-import os
-
-# 3rd party
-import numpy as np
-
 # local
-from src.torch.data import MeshData
 import fit
-import camera
 
 # ------------------------------------------------------------
 
 
-def run(mdir, nbl, bmesh, imdir, it, calib):
-    # blendshapes
-    bl_vtx = np.empty(nbl)
-    bl_tri = np.empty(nbl)
-    for i, file in enumerate(os.listdir(mdir)):
-        if file.endswith(".obj"):
-            mesh = MeshData(file)
-            bl_vtx[i] = mesh.vertices
-            bl_tri[i] = mesh.faces
-
-    # basemesh
-    bm = MeshData(bmesh)
-    bm_vtx = np.asarray(bm.vertices)
-    bm_tri = np.asarray(bm.faces)
-
-    # setup
-
-    # dr
-    fit.fitTake()
+def run():
+    fit.fitTake(
+        max_iter=10000,
+        lr_base=10e-2,
+        lr_ramp=0.1,
+        basemeshpath=r"C:\Users\Henkka\Projects\invrend-fpc\data\basemesh.obj",
+        localblpath=r"C:\Users\Henkka\Projects\invrend-fpc\data\ilkvil_blendshapes",
+        globalblpath="",
+        display_interval=100,
+        imdir=r"C:\Users\Henkka\Projects\invrend-fpc\data\reference\rom\take0001\20191106_ilkvil_ML_ROM_take0001_pod2colour_range01",
+        calibpath=r"C:\Users\Henkka\Projects\invrend-fpc\data\calibration\2021-07-01\DI_calibration.json",
+        enable_mip=False,
+        max_mip_level=6,
+        texshape=(1024, 1024, 3),
+        out_dir=r"C:\Users\Henkka\Projects\invrend-fpc\data\out_img\take0001"
+    )
 
 # -----------------------------------------------------------
 
-# Define args here
-meshdir = ""
-imagedir = ""
-num_bl = 624
-basemesh = ""
-iters = 1000
-calibration = ""
-
 if __name__ == "__main__":
-    run(meshdir, num_bl, basemesh, imagedir, iters, calibration)
+    run()

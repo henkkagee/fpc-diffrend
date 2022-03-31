@@ -27,13 +27,13 @@ def simple_render():
     rot = np.asarray(calib['rotation'], dtype=np.float32)
     trans = np.asarray(calib['translation'], dtype=np.float32)
 
-    rubiks = data.MeshData(r"C:\Users\Henkka\Projects\invrend-fpc\data\cube\rubiks.obj")
+    rubiks = data.MeshData(r"C:\Users\Henkka\Projects\invrend-fpc\data\cube\rubiks_bl.obj")
 
     pos = torch.tensor(rubiks.vertices, dtype=torch.float32, device='cuda')
     tri = torch.tensor(rubiks.faces, dtype=torch.int32, device='cuda')
     uv = torch.tensor(rubiks.uv, dtype=torch.float32, device='cuda')
     uv_idx = torch.tensor(rubiks.fuv, dtype=torch.int32, device='cuda')
-    texture = np.array(Image.open(r"C:\Users\Henkka\Projects\invrend-fpc\data\cube\tex.png"))/255.0
+    texture = np.array(Image.open(r"C:\Users\Henkka\Projects\invrend-fpc\data\cube\rubiks.png"))/255.0
     tex = torch.tensor(texture, dtype=torch.float32, device='cuda')
 
     """proj = camera.default_projection()
@@ -44,7 +44,7 @@ def simple_render():
     glctx = dr.RasterizeGLContext(device='cuda')
     a = 0
     for i in range(100):
-        rot = np.matmul(camera.rotate_x(0.2), camera.rotate_y(a))
+        # rot = np.matmul(camera.rotate_x(a), camera.rotate_y(a))
         mvr = np.matmul(mv, rot)
         a += 0.01 * 2 * np.pi
         mvp = np.matmul(proj, mvr).astype(np.float32)

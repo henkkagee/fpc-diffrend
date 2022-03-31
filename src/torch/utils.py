@@ -3,9 +3,23 @@ import OpenGL.GL as gl
 import glfw
 from PIL import Image
 
-# _glfw_window = None
+# -------------------------------------------------------------------------------------------------
 
-# ----------------------------------------------------------------------
+
+def make_img(arr, ncols=2):
+    """
+    Stack a number of images into a grid.
+
+    :param arr: Array of images of same shape
+    :param ncols: Number of columns in image grid.
+    :return:
+    """
+    n, height, width, nc = arr.shape
+    nrows = n//ncols
+    assert n == nrows*ncols
+    return arr.reshape(nrows, ncols, height, width, nc).swapaxes(1,2).reshape(height*nrows, width*ncols, nc)
+
+# -------------------------------------------------------------------------------------------------
 
 
 _glfw_window = None
@@ -52,7 +66,7 @@ def display_image(image, zoom=None, size=None, title=None): # HWC
         return False
     return True
 
-# ---------------------------------------------------------------------
+# -------------------------------------------------------------------------------------------------
 
 
 def save_image(filepath, x):

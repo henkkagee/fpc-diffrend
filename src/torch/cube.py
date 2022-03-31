@@ -53,10 +53,12 @@ def render(glctx, mtx, pos, pos_idx, uv, uv_idx, tex, resolution: tuple):
     pos_clip = camera.transform_clip(mtx, pos)
     rast_out, rast_out_db = dr.rasterize(glctx, pos_clip, pos_idx, resolution=(resolution[0], resolution[1]))
 
-    texc, texd = dr.interpolate(uv[None, ...], rast_out, uv_idx, rast_db=rast_out_db, diff_attrs='all')
-    colour = dr.texture(tex[None, ...], texc, texd, filter_mode='linear-mipmap-linear', max_mip_level=8)
-
+    # texc, texd = dr.interpolate(uv[None, ...], rast_out, uv_idx, rast_db=rast_out_db, diff_attrs='all')
+    texc, _ = dr.interpolate(uv[None, ...], rast_out, uv_idx)
+    # colour = dr.texture(tex[None, ...], texc, texd, filter_mode='linear-mipmap-linear', max_mip_level=8)
+    colour = dr.texture(tex[None, ...], texc, filter_mode='linear')
     colour = dr.antialias(colour, rast_out, pos_clip, pos_idx)
+    colour = colour * torch.clamp(rast_out[..., -1:], 0, 1)
     return colour[0]
 
 # -------------------------------------------------------------------------------------------------
@@ -91,7 +93,7 @@ def rot_trans_matrices(rot_tensor, t_tensor):
     rot_opt = torch.stack([
         torch.cat([rotmat[0], torch.zeros(1, device='cuda')]),
         torch.cat([rotmat[1], torch.zeros(1, device='cuda')]),
-        torch.cat([rotmat[1], torch.zeros(1, device='cuda')]),
+        torch.cat([rotmat[2], torch.zeros(1, device='cuda')]),
         torch.cat([torch.zeros(3, device='cuda'), torch.ones(1, device='cuda')])]).reshape(4, 4)
     t_opt = torch.stack([
         torch.tensor([1.0, 0.0, 0.0, 0.0], dtype=torch.float32, device='cuda'),
@@ -166,7 +168,7 @@ def fit_cube(max_iter          = 5000,
 
     # context
     glctx = dr.RasterizeGLContext()
-    optimizer = torch.optim.Adam([rotvec, tvec, scale], lr=1e-2)
+    optimizer = torch.optim.Adam([rotvec, tvec, scale], lr=1e-1)
     scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer, lr_lambda=lambda x: max(0.01, 10 ** (-x * 0.0005)))
 
     for cam in cams:
@@ -190,7 +192,7 @@ def fit_cube(max_iter          = 5000,
 
             # lens distortion handled as preprocess in reference images
             projection = torch.tensor(camera.intrinsic_to_projection(intr), dtype=torch.float32, device='cuda')
-            projection = torch.tensor(camera.default_projection(), dtype=torch.float32, device='cuda')
+            # projection = torch.tensor(camera.default_projection(), dtype=torch.float32, device='cuda')
             modelview = torch.tensor(camera.extrinsic_to_modelview(rot, trans), dtype=torch.float32, device='cuda')
 
             for it in range(max_iter + 1):
@@ -203,12 +205,13 @@ def fit_cube(max_iter          = 5000,
 
                 rot_opt, t_opt = rot_trans_matrices(rotvec, tvec)
                 rt = torch.matmul(t_opt, rot_opt)
-                mv = torch.matmul(torch.tensor(camera.default_modelview(), dtype=torch.float32, device='cuda'), rt)
+                mv = torch.matmul(modelview, rt)
                 mvp = torch.matmul(projection, mv)
-                vtxp_opt = torch.mul(vtxp, scale)
+                # vtxp_opt = torch.mul(vtxp, scale)
+                mvp_ref = torch.matmul(projection, modelview)
 
                 # render
-                colour = render(glctx, mvp, vtxp_opt, pos_idx, uv, uv_idx, tex, resolution)
+                colour = render(glctx, mvp, vtxp, pos_idx, uv, uv_idx, tex, resolution)
 
                 # Compute loss and train.
                 loss = torch.mean((ref - colour*255) ** 2)  # L2 pixel loss.
@@ -217,18 +220,12 @@ def fit_cube(max_iter          = 5000,
                 optimizer.step()
                 scheduler.step()
 
-                # geometric error
-                with torch.no_grad():
-                    # geom_loss = torch.mean(torch.sum((torch.abs(vtxp - vtxp)) ** 2, dim=0) ** 0.5)
-                    avg_pos = torch.mean(vtxp_opt)
-                    gl_avg.append(float(loss))
-
                 # Print/save log.
                 if log_interval and (it % log_interval == 0):
                     gl_val = np.mean(np.asarray(gl_avg))
                     gl_avg = []
                     s = ""
-                    s += f"iter={it}, err={gl_val}, avg_pos={avg_pos}"
+                    s += f"iter={it}, err={loss}"
                     print(s)
                     if log_file:
                         log_file.write(s + "\n")
@@ -262,10 +259,10 @@ def main():
 
     # Run
     fit_cube(
-        max_iter=1000,
+        max_iter=2000,
         resolution=(1600, 1200),
         log_interval=20,
-        display_interval=3,
+        display_interval=5,
         display_res=1024,
         out_dir=r"C:\Users\Henkka\Projects\invrend-fpc\data\cube\out_img",
         log_fn='log.txt',
