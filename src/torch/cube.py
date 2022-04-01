@@ -58,7 +58,8 @@ def render(glctx, mtx, pos, pos_idx, uv, uv_idx, tex, resolution: tuple):
     # colour = dr.texture(tex[None, ...], texc, texd, filter_mode='linear-mipmap-linear', max_mip_level=8)
     colour = dr.texture(tex[None, ...], texc, filter_mode='linear')
     colour = dr.antialias(colour, rast_out, pos_clip, pos_idx)
-    colour = colour * torch.clamp(rast_out[..., -1:], 0, 1)
+    # colour = colour * torch.clamp(rast_out[..., -1:], 35.0/255.0, 36.0/255.0)
+    colour = torch.where(rast_out[..., 3:] > 0, colour, torch.tensor(36.0/255.0).cuda())
     return colour[0]
 
 # -------------------------------------------------------------------------------------------------
@@ -200,7 +201,7 @@ def fit_cube(max_iter          = 5000,
                 # camera distortion is handled as preprocessing step on the reference images
 
                 # split [n_vertices * 3] to [n_vertices, 3] as a view of the original tensor
-                # vtxp_split = torch.reshape(vtxp, (vtxp.shape[0] // 3, 3))
+                vtxp_split = torch.reshape(vtxp, (vtxp.shape[0] // 3, 3))
                 # vtxp_opt_split = torch.reshape(vtxp_opt, (vtxp_opt.shape[0]//3, 3))
 
                 rot_opt, t_opt = rot_trans_matrices(rotvec, tvec)
@@ -211,7 +212,7 @@ def fit_cube(max_iter          = 5000,
                 mvp_ref = torch.matmul(projection, modelview)
 
                 # render
-                colour = render(glctx, mvp, vtxp, pos_idx, uv, uv_idx, tex, resolution)
+                colour = render(glctx, mvp, vtxp_split, pos_idx, uv, uv_idx, tex, resolution)
 
                 # Compute loss and train.
                 loss = torch.mean((ref - colour*255) ** 2)  # L2 pixel loss.

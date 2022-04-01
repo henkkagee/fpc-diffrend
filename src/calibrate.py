@@ -72,14 +72,14 @@ blobdetector = cv2.SimpleBlobDetector_create(params)
 calibdict = {}
 imgpoints = []  # 2d points in image plane.
 img = None
-prevcamname = "pod1primary"
-# path = "C:/Users/Henkka/Projects/invrend-fpc/data/calibration/2018-11-15/extracted"
-path = "C:/Users/Henkka/Projects/invrend-fpc/data/calibration/2021-07-01"
+prevcamname = "pod1bottom"
+path = "C:/Users/Henkka/Projects/invrend-fpc/data/calibration/2018-11-15/extracted"
+# path = "C:/Users/Henkka/Projects/invrend-fpc/data/calibration/2021-07-01"
 # path = r"\\rmd.remedy.fi\Capture\System\RAW\Calibrations\2021-12-07"
 images = os.listdir(path)
 
 # different threshold values to try to account for reflections in the calibration target
-thresholds = [190, 200, 210, 220, 230, 240, 250, 180, 170, 160, 150, 140]
+thresholds = [200, 190, 180, 170, 160, 150, 140]
 
 # for root, dirs, files in os.walk(path):
 for fname in images:
@@ -105,7 +105,7 @@ for fname in images:
     for thres in thresholds:
         ret, img = cv2.threshold(preimg, thres, 255, cv2.THRESH_BINARY)
         cv2.imshow('thresh', img)
-        cv2.waitKey(200)
+        cv2.waitKey(500)
         ret, centers = cv2.findCirclesGrid(img, np.asarray([10, 10]))
 
         if not ret:
@@ -121,7 +121,7 @@ for fname in images:
         imgpoints.append(centers)
         cv2.drawChessboardCorners(img, (10,10), centers, ret)
         cv2.imshow('img', img)
-        cv2.waitKey(200)
+        cv2.waitKey(500)
     else:
         # raise Exception(f"No centers found for image {path}/{fname}")
         print(f"No centers found for image {path}/{fname}")
@@ -132,7 +132,7 @@ realcamname = changeCamName(prevcamname)
 calibdict[realcamname] = calibrate(objpoints, imgpoints, img)
 
 # save calibration file
-json.dump(calibdict, codecs.open("C:/Users/Henkka/Projects/invrend-fpc/data/calibration/2021-07-01/calibration.json",
+json.dump(calibdict, codecs.open("C:/Users/Henkka/Projects/invrend-fpc/data/calibration/2018-11-15/calibration142022.json",
                                  'w', encoding='utf-8'),
           separators=(',', ':'),
           sort_keys=True,

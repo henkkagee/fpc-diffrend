@@ -13,12 +13,14 @@ def run():
         localblpath=r"C:\Users\Henkka\Projects\invrend-fpc\data\ilkvil_blendshapes",
         globalblpath="",
         display_interval=100,
+        log_interval=100,
         imdir=r"C:\Users\Henkka\Projects\invrend-fpc\data\reference\rom\take0001\20191106_ilkvil_ML_ROM_take0001_pod2colour_range01",
-        calibpath=r"C:\Users\Henkka\Projects\invrend-fpc\data\calibration\2021-07-01\DI_calibration.json",
+        calibpath=r"C:\Users\Henkka\Projects\invrend-fpc\data\calibration\2021-07-01\calibration.json",
         enable_mip=False,
         max_mip_level=6,
-        texshape=(1024, 1024, 3),
-        out_dir=r"C:\Users\Henkka\Projects\invrend-fpc\data\out_img\take0001"
+        texshape=(1024, 1024, 1),
+        out_dir=r"C:\Users\Henkka\Projects\invrend-fpc\data\out_img\take0001",
+        resolution=(1600, 1200)
     )
 
 # -----------------------------------------------------------

@@ -7,6 +7,7 @@ import numpy as np
 import torch
 import nvdiffrast.torch as dr
 from PIL import Image
+import cv2
 
 # local
 import src.torch.data as data
@@ -70,8 +71,8 @@ def render(glctx, mtx, pos, pos_idx, uv, uv_idx, tex, resolution, enable_mip, ma
     :param max_mip_level: Limits the number of mipmaps constructed and used in mipmap-based filter modes.
     :return:
     """
-    pos_clip = camera.transformClip(mtx, pos)
-    rast_out, rast_out_db = dr.rasterize(glctx, pos_clip, pos_idx, resolution=[resolution, resolution])
+    pos_clip = camera.transform_clip(mtx, pos)
+    rast_out, rast_out_db = dr.rasterize(glctx, pos_clip, pos_idx, resolution=(resolution[0], resolution[1]))
 
     if enable_mip:
         texc, texd = dr.interpolate(uv[None, ...], rast_out, uv_idx, rast_db=rast_out_db, diff_attrs='all')
@@ -81,10 +82,12 @@ def render(glctx, mtx, pos, pos_idx, uv, uv_idx, tex, resolution, enable_mip, ma
         colour = dr.texture(tex[None, ...], texc, filter_mode='linear')
 
     colour = dr.antialias(colour, rast_out, pos_clip, pos_idx)
-    colour = colour * torch.clamp(rast_out[..., -1:], 0, 1)
-    return colour
+    # colour = colour * torch.clamp(rast_out[..., -1:], 0, 1)
+    colour = torch.where(rast_out[..., 3:] > 0, colour, torch.tensor(36.0 / 255.0).cuda())
+    return colour[0]
 
 # -------------------------------------------------------------------------------------------------
+
 
 def setup_dataset(localblpath, globalblpath, n_frames, n_vertices_x3):
     """
@@ -104,26 +107,29 @@ def setup_dataset(localblpath, globalblpath, n_frames, n_vertices_x3):
         objs = os.listdir(localblpath)
         n_meshes = len(objs)
         localbl = np.empty((n_meshes, n_vertices_x3), dtype=np.float32)
+        print("Reading blendshapes...")
         for i, obj in enumerate(objs):
+            if i % 50 == 0:
+                print(f"Blendshape {i}/{n_meshes}")
             meshdata = data.MeshData(os.path.join(localblpath, obj))
             localbl[i] = meshdata.vertices
 
         # shapes
-        m_3vb = torch.tensor(localbl, dtype=torch.float32, device='cuda')
+        m_3vb = torch.tensor(localbl.transpose(), dtype=torch.float32, device='cuda')
         datasets['local'] = m_3vb
 
         # mappings
-        m_bf_face = torch.tensor(np.empty((n_frames, n_meshes)), dtype=torch.float32,
+        m_bf_face = torch.tensor(np.empty((n_meshes, n_frames)), dtype=torch.float32,
                                  device='cuda', requires_grad=True)
         maps['local'] = m_bf_face
 
-    return datasets, maps, torch.zeros(n_frames)
+    return datasets, maps, torch.zeros(n_frames, dtype=torch.float32, device='cuda')
 
 # -------------------------------------------------------------------------------------------------
 
 
 def fitTake(max_iter, lr_base, lr_ramp, basemeshpath, localblpath, globalblpath, display_interval,
-            imdir, calibpath, enable_mip, max_mip_level, texshape, out_dir):
+            log_interval, imdir, calibpath, enable_mip, max_mip_level, texshape, out_dir, resolution):
     """
     Fit one take (continuous range of frames).
 
@@ -135,12 +141,14 @@ def fitTake(max_iter, lr_base, lr_ramp, basemeshpath, localblpath, globalblpath,
     :param localblpath: Path to directory of local blendshapes
     :param globalblpath: Path to directory of global blendshapes
     :param display_interval: Epoch interval for displaying render previews
+    :param log_interval: Epoch interval for logging loss
     :param imdir: Image directory to take with structure take/camera/frame
     :param calibs: Camera calibration dict from calibration file for take in question
     :param enable_mip: Boolean whether to enable mipmapping
     :param max_mip_level: Limits the number of mipmaps constructed and used in mipmap-based filter modes
     :param texshape: Shape of the texture with resolution and channels (height, width, channels)
     :param out_dir: Directory to save result data to
+    :param resolution: Resolution to render in (height, width)
     :return:
     """
 
@@ -157,26 +165,28 @@ def fitTake(max_iter, lr_base, lr_ramp, basemeshpath, localblpath, globalblpath,
     v_base = torch.tensor(basemesh.vertices, dtype=torch.float32, device='cuda')
     pos_idx = torch.tensor(basemesh.faces, dtype=torch.int32, device='cuda')
     uv = torch.tensor(basemesh.uv, dtype=torch.float32, device='cuda')
-    uv_idx = torch.tensor(basemesh.fuv, dtype=torch.float32, device='cuda')
+    uv_idx = torch.tensor(basemesh.fuv, dtype=torch.int32, device='cuda')
     tex = np.random.uniform(low=0.0, high=255.0, size=texshape)
     tex_opt = torch.tensor(tex, dtype=torch.float32, device='cuda', requires_grad=True)
 
     # blendshapes and mappings
     n_vertices_x3 = v_base.shape[0]
-    datasets, maps, frames = setup_dataset(localblpath, globalblpath, n_frames, n_vertices_x3)
+    datasets, maps, v_f = setup_dataset(localblpath, globalblpath, n_frames, n_vertices_x3)
 
     # context and optimizer
+    print("Setting up RasterizeGLContext and optimizer...")
     glctx = dr.RasterizeGLContext()
-    optimizer = torch.optim.Adam([maps['local'], tex], lr=lr_base)
+    optimizer = torch.optim.Adam([maps['local'], tex_opt], lr=lr_base)
     scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer, lr_lambda=lambda x: lr_ramp**(float(x)/float(max_iter)))
 
+    # starting camera iteration
     for cam in cams:
         # get camera calibration
         if "pod2texture" not in cam:
             continue
         calib = calibs[cam.split("_")[1]]
         intr = np.asarray(calib['intrinsic'], dtype=np.float32)
-        # dist = np.asarray(calib['distortion'], dtype=np.float32)
+        dist = np.asarray(calib['distortion'], dtype=np.float32)
         rot = np.asarray(calib['rotation'], dtype=np.float32)
         trans = np.asarray(calib['translation'], dtype=np.float32)
 
@@ -185,28 +195,32 @@ def fitTake(max_iter, lr_base, lr_ramp, basemeshpath, localblpath, globalblpath,
         for i, frame in enumerate(frames):
             # reference image to render against
             img = np.array(Image.open(os.path.join(camdir, frame)))
+            # img = cv2.undistort(img, intr, dist)
             ref = torch.from_numpy(img).cuda()
+            ref = ref.reshape((ref.shape[0], ref.shape[1], 1))
 
             # set one-hot frame index
             framenum = int(os.path.splitext(frame)[0].split("_")[-1])
-            frames[framenum] = 1
+            v_f[framenum] = 1
 
             # modelview and projection
             # TODO: how to incorporate camera distortion parameters in projection? in shaders?
             # lens distortion currently handled as preprocess in reference images
             projection = camera.intrinsic_to_projection(intr)
             modelview = camera.extrinsic_to_modelview(rot, trans)
-            mvp = np.matmul(projection, modelview)
+            trans = torch.tensor(camera.translate(0.0, -175.0, 0.0), dtype=torch.float32, device='cuda')
+            t_mv = torch.matmul(torch.from_numpy(modelview).cuda(), trans)
+            mvp = torch.matmul(torch.from_numpy(projection).cuda(), t_mv)
 
             # render
             for it in range(max_iter + 1):
                 # get blended vertex positions according to eq.
-                vtx_pos = blend(v_base, maps, datasets, frames)
+                vtx_pos = blend(v_base, maps, datasets, v_f).cuda()
                 # split [n_vertices * 3] to [n_vertices, 3] as a view of the original tensor
                 vtx_pos_split = torch.reshape(vtx_pos, (vtx_pos.shape[0] // 3, 3))
 
                 # render
-                colour = render(glctx, mvp, vtx_pos_split, pos_idx, uv, uv_idx, tex, img.shape[::-1], enable_mip, max_mip_level)
+                colour = render(glctx, mvp, vtx_pos_split, pos_idx, uv, uv_idx, tex_opt, resolution, enable_mip, max_mip_level)
 
                 # Compute loss and train.
                 # TODO: add activation constraints (L1 sparsity)
@@ -215,6 +229,11 @@ def fitTake(max_iter, lr_base, lr_ramp, basemeshpath, localblpath, globalblpath,
                 loss.backward()
                 optimizer.step()
                 scheduler.step()
+
+                # Print loss logging
+                log = (log_interval and (it % log_interval == 0))
+                if log:
+                    print(f"It[{it}] - Loss: {loss}")
 
                 # Show/save image.
                 display_image = (display_interval and (it % display_interval == 0)) or it == max_iter
@@ -225,7 +244,7 @@ def fitTake(max_iter, lr_base, lr_ramp, basemeshpath, localblpath, globalblpath,
                     result_image = utils.make_img(np.stack([img_ref, img_col]))
                     utils.display_image(result_image)
 
-                    img_out = colour[0].cpu().numpy()
-                    utils.display_image(img_out, size=img.shape[::-1])
+                    # img_out = colour[0].cpu().numpy()
+                    # utils.display_image(img_out, size=img.shape[::-1])
             utils.save_image(os.path.join(out_dir, frame), img_col)
-            frames[framenum] = 0
+            v_f[framenum] = 0

@@ -10,7 +10,7 @@ import xml.etree.ElementTree as et
 # for cam in root:
 # ...
 
-path = "W:/git/fpc-diffrend/calibration2.json"
+path = "W:/git/invrend-fpc/calibration.json"
 with open(path, 'r') as json_file:
     calib = json.load(json_file)
 
