@@ -12,7 +12,7 @@ def run():
         basemeshpath=r"C:\Users\Henkka\Projects\invrend-fpc\data\basemesh.obj",
         localblpath=r"C:\Users\Henkka\Projects\invrend-fpc\data\ilkvil_blendshapes",
         globalblpath="",
-        display_interval=100,
+        display_interval=1,
         log_interval=100,
         imdir=r"C:\Users\Henkka\Projects\invrend-fpc\data\reference\rom\take0001\20191106_ilkvil_ML_ROM_take0001_pod2colour_range01",
         calibpath=r"C:\Users\Henkka\Projects\invrend-fpc\data\calibration\2021-07-01\calibration.json",

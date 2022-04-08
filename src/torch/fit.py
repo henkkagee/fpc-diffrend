@@ -47,9 +47,10 @@ def blend(v_base, maps, dataset, frames):
     :return: Blended mesh vertex positions of shape [3*v], (x,y,z,x,...)
     """
     if 'global' not in dataset:
-        mapped = torch.matmul(maps['local'], frames)
-        bl_res = torch.matmul(dataset['local'], mapped)
-        vtx_pos = torch.add(v_base, bl_res)
+        print(f"shapes:\nv_base[{v_base.shape}\ndataset['local][{dataset['local'].shape}]\nmaps['local][{maps['local'].shape}]\nframes[{frames.shape}]")
+        bl_res = torch.matmul(dataset['local'], maps['local'])
+        mapped = torch.matmul(bl_res, frames)
+        vtx_pos = torch.add(v_base, mapped)
         return vtx_pos
 
 # -------------------------------------------------------------------------------------------------
@@ -107,19 +108,26 @@ def setup_dataset(localblpath, globalblpath, n_frames, n_vertices_x3):
         objs = os.listdir(localblpath)
         n_meshes = len(objs)
         localbl = np.empty((n_meshes, n_vertices_x3), dtype=np.float32)
-        print("Reading blendshapes...")
+
+        # not using data.MeshData to speed things up as we only need the vertex positions
+        print("Collecting blendshapes...")
         for i, obj in enumerate(objs):
             if i % 50 == 0:
                 print(f"Blendshape {i}/{n_meshes}")
-            meshdata = data.MeshData(os.path.join(localblpath, obj))
-            localbl[i] = meshdata.vertices
+            vertices = []
+            with open(os.path.join(localblpath, obj), 'r') as f:
+                # vertex positions x,y,z,x,...,z
+                for line in f:
+                    if line.startswith("v "):
+                        vertices.extend([float(x) for x in line.strip().split(" ")[1:]])
+            localbl[i] = np.asarray(vertices, dtype=np.float32)
 
         # shapes
         m_3vb = torch.tensor(localbl.transpose(), dtype=torch.float32, device='cuda')
         datasets['local'] = m_3vb
 
         # mappings
-        m_bf_face = torch.tensor(np.empty((n_meshes, n_frames)), dtype=torch.float32,
+        m_bf_face = torch.tensor(np.zeros((n_meshes, n_frames)), dtype=torch.float32,
                                  device='cuda', requires_grad=True)
         maps['local'] = m_bf_face
 
@@ -166,7 +174,7 @@ def fitTake(max_iter, lr_base, lr_ramp, basemeshpath, localblpath, globalblpath,
     pos_idx = torch.tensor(basemesh.faces, dtype=torch.int32, device='cuda')
     uv = torch.tensor(basemesh.uv, dtype=torch.float32, device='cuda')
     uv_idx = torch.tensor(basemesh.fuv, dtype=torch.int32, device='cuda')
-    tex = np.random.uniform(low=0.0, high=255.0, size=texshape)
+    tex = np.random.uniform(low=0.0, high=1.0, size=texshape)
     tex_opt = torch.tensor(tex, dtype=torch.float32, device='cuda', requires_grad=True)
 
     # blendshapes and mappings
@@ -208,7 +216,7 @@ def fitTake(max_iter, lr_base, lr_ramp, basemeshpath, localblpath, globalblpath,
             # lens distortion currently handled as preprocess in reference images
             projection = camera.intrinsic_to_projection(intr)
             modelview = camera.extrinsic_to_modelview(rot, trans)
-            trans = torch.tensor(camera.translate(0.0, -175.0, 0.0), dtype=torch.float32, device='cuda')
+            trans = torch.tensor(camera.translate(0.0, -173.0, 0.0), dtype=torch.float32, device='cuda')
             t_mv = torch.matmul(torch.from_numpy(modelview).cuda(), trans)
             mvp = torch.matmul(torch.from_numpy(projection).cuda(), t_mv)
 
@@ -233,7 +241,7 @@ def fitTake(max_iter, lr_base, lr_ramp, basemeshpath, localblpath, globalblpath,
                 # Print loss logging
                 log = (log_interval and (it % log_interval == 0))
                 if log:
-                    print(f"It[{it}] - Loss: {loss}")
+                    print(f"It[{it}] - Loss: {loss} - pos_vtx[1]: {vtx_pos_split[0]} - avg_act: {torch.mean(maps['local'][framenum])}")
 
                 # Show/save image.
                 display_image = (display_interval and (it % display_interval == 0)) or it == max_iter
@@ -246,5 +254,6 @@ def fitTake(max_iter, lr_base, lr_ramp, basemeshpath, localblpath, globalblpath,
 
                     # img_out = colour[0].cpu().numpy()
                     # utils.display_image(img_out, size=img.shape[::-1])
+                input()
             utils.save_image(os.path.join(out_dir, frame), img_col)
             v_f[framenum] = 0

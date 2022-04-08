@@ -59,7 +59,7 @@ def render(glctx, mtx, pos, pos_idx, uv, uv_idx, tex, resolution: tuple):
     colour = dr.texture(tex[None, ...], texc, filter_mode='linear')
     colour = dr.antialias(colour, rast_out, pos_clip, pos_idx)
     # colour = colour * torch.clamp(rast_out[..., -1:], 35.0/255.0, 36.0/255.0)
-    colour = torch.where(rast_out[..., 3:] > 0, colour, torch.tensor(36.0/255.0).cuda())
+    colour = torch.where(rast_out[..., 3:] > 0, colour, torch.tensor(0.0).cuda())
     return colour[0]
 
 # -------------------------------------------------------------------------------------------------

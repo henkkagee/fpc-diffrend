@@ -1,7 +1,25 @@
 import numpy as np
-import OpenGL.GL as gl
-import glfw
+import os
 from PIL import Image
+
+# -------------------------------------------------------------------------------------------------
+
+
+def assert_num_frames(cams, imdir):
+    """
+    Get number of frames outside optimization loop to init tensors and make sure each camera has the
+    same number of frames
+
+    :param cams: List of camera directories with stored reference frames
+    :return:
+    """
+    n_frames = []
+    for cam in cams:
+        camdir = os.path.join(imdir, cam)
+        frames = os.listdir(camdir)
+        n_frames.append(len(frames))
+    assert not any([x != n_frames[0] for x in n_frames])
+    return n_frames[0]
 
 # -------------------------------------------------------------------------------------------------
 
