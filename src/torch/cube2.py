@@ -129,9 +129,10 @@ def render(glctx, mtx, pos, pos_idx, uv, uv_idx, tex, resolution: tuple):
     # Setup TF graph for reference.
     pos_clip    = camera.transform_clip(mtx, pos)
     rast_out, _ = dr.rasterize(glctx, pos_clip, pos_idx, resolution=[resolution[0], resolution[1]])
-    color   , _ = dr.interpolate(uv[None, ...], rast_out, uv_idx)
-    color       = dr.antialias(color, rast_out, pos_clip, pos_idx)
-    return color
+    texc, _ = dr.interpolate(uv[None, ...], rast_out, uv_idx)
+    colour = dr.texture(tex[None, ...], texc, filter_mode='linear')
+    colour       = dr.antialias(colour, rast_out, pos_clip, pos_idx)
+    return colour
 
 # ----------------------------------------------------------------------------
 # Cube pose fitter.
@@ -164,7 +165,6 @@ def fit_pose(max_iter           = 10000,
 
     # Set up logging.
     if out_dir:
-        out_dir = f'{out_dir}/cube_{resolution}'
         print(f'Saving results under {out_dir}')
         writer = imageio.get_writer(f'{out_dir}/progress.mp4', mode='I', fps=30, codec='libx264', bitrate='16M')
     else:
@@ -190,6 +190,7 @@ def fit_pose(max_iter           = 10000,
     pose_init = q_rnd()
     pose_opt = torch.tensor(pose_init / np.sum(pose_init ** 2) ** 0.5, dtype=torch.float32, device='cuda',
                             requires_grad=True)
+    vtx_pos_split = torch.reshape(vtx_pos, (vtx_pos.shape[0] // 3, 3))
 
     loss_best = np.inf
     pose_best = pose_opt.detach().clone()
@@ -243,7 +244,7 @@ def fit_pose(max_iter           = 10000,
                 # Render.
                 pose_total_opt = q_mul_torch(pose_opt, noise)
                 mtx_total_opt  = torch.matmul(mvp, q_to_mtx(pose_total_opt))
-                color_opt      = render(glctx, mtx_total_opt, vtx_pos, pos_idx, uv, uv_idx, tex, resolution)
+                color_opt      = render(glctx, mtx_total_opt, vtx_pos_split, pos_idx, uv, uv_idx, tex, resolution)
 
                 # Image-space loss.
                 diff = (color_opt - ref)**2 # L2 norm.
@@ -279,11 +280,13 @@ def fit_pose(max_iter           = 10000,
                 save_mp4      = mp4save_interval and (it % mp4save_interval == 0)
 
                 if display_image or save_mp4:
-                    c = ref[0].detach().cpu().numpy()
-                    img_ref  = ref[0].detach().cpu().numpy()
+                    img_ref  = ref.detach().cpu().numpy()
+                    img_ref = np.array(img_ref.copy(), dtype=np.float32)/255
                     img_opt  = color_opt[0].detach().cpu().numpy()
-                    img_best = render(glctx, torch.matmul(mvp, q_to_mtx(pose_best)), vtx_pos, pos_idx, uv, uv_idx, resolution)[0].detach().cpu().numpy()
+                    img_best = render(glctx, torch.matmul(mvp, q_to_mtx(pose_best)), vtx_pos_split, pos_idx, uv, uv_idx, tex,
+                                      resolution)[0].detach().cpu().numpy()
                     result_image = np.concatenate([img_ref, img_best, img_opt], axis=1)
+                    # print(f"shapes: img_ref: {img_ref.shape}, img_opt: {img_opt.shape}, img_best: {img_best.shape}")
 
                     if display_image:
                         utils.display_image(result_image, size=display_res, title='%d / %d' % (it, max_iter))
@@ -300,7 +303,7 @@ def fit_pose(max_iter           = 10000,
 
 def main():
 
-    path = r"C:\Users\Henkka\Projects\invrend-fpc\data\calibration\2021-07-01\calibration_di_distort.json"
+    path = r"C:\Users\Henkka\Projects\invrend-fpc\data\calibration\2021-07-01\calibration.json"
     with open(path) as json_file:
         calibs = json.load(json_file)
 
