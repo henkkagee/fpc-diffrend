@@ -19,7 +19,7 @@ def simple_render():
 
     :return:
     """
-    path = r"C:\Users\Henkka\Projects\invrend-fpc\data\calibration\2021-07-01\calibration_di_distort.json"
+    path = r"C:\Users\Henkka\Projects\invrend-fpc\data\calibration\combined\calibration.json"
     with open(path) as json_file:
         calibs = json.load(json_file)
     calib = calibs['pod2texture']
@@ -29,12 +29,14 @@ def simple_render():
     trans = np.asarray(calib['translation'], dtype=np.float32)
 
     rubiks = data.MeshData(r"C:\Users\Henkka\Projects\invrend-fpc\data\basemesh.obj")
+    # rubiks = data.MeshData(r"C:\Users\Henkka\Projects\invrend-fpc\data\cube\rubiks.obj")
 
     pos = torch.tensor(rubiks.vertices, dtype=torch.float32, device='cuda')
     tri = torch.tensor(rubiks.faces, dtype=torch.int32, device='cuda')
     uv = torch.tensor(rubiks.uv, dtype=torch.float32, device='cuda')
     uv_idx = torch.tensor(rubiks.fuv, dtype=torch.int32, device='cuda')
-    texture = np.array(Image.open(r"C:\Users\Henkka\Projects\invrend-fpc\data\ilkvil_tex_grid.png"))/255.0
+    # texture = np.array(Image.open(r"C:\Users\Henkka\Projects\invrend-fpc\data\cube\rubiks.png"))/255.0
+    texture = np.array(Image.open(r"C:\Users\Henkka\Projects\invrend-fpc\data\ilkvil_tex_grid.png")) / 255.0
     tex = torch.tensor(texture, dtype=torch.float32, device='cuda')
 
     proj = torch.tensor(camera.intrinsic_to_projection(intr), dtype=torch.float32, device='cuda')
@@ -43,10 +45,11 @@ def simple_render():
     # mv = torch.tensor(camera.default_modelview(), dtype=torch.float32, device='cuda')
 
     glctx = dr.RasterizeGLContext(device='cuda')
-    for i in range(100):
+    for i in range(200):
 
-        tr = torch.matmul(torch.tensor(camera.translate(0.0, -175.0, 0.0), dtype=torch.float32, device='cuda'),
-                          torch.tensor(camera.rotate_y(np.pi), dtype=torch.float32, device='cuda'))
+        tr = torch.matmul(torch.tensor(camera.translate(0.0, -176.0, -9.0), dtype=torch.float32, device='cuda'),
+                          torch.tensor(camera.rotate_x(0.0), dtype=torch.float32, device='cuda'))
+        # tr = torch.matmul(tr, torch.tensor(camera.rotate_y(-0.6), dtype=torch.float32, device='cuda'))
         tp = torch.matmul(mv, tr)
         pos_split = torch.reshape(pos, (pos.shape[0] // 3, 3))
         mvp = torch.matmul(proj, tp)
@@ -61,14 +64,20 @@ def simple_render():
         colour = dr.antialias(colour, rast, pos_clip, tri)
         colour = torch.where(rast[..., 3:] > 0, colour, torch.tensor(0.0).cuda())
 
-        img = colour.cpu().numpy()[0, ::1, :, :] # Flip vertically due to opengl standards
+        img = colour.cpu().numpy()[0, ::-1, :, :] # Flip vertically due to opengl standards
+
+        # undistort w.r.t. lens distortion
+        # mapx, mapy = cv2.initUndistortRectifyMap(intr, dist, np.empty(0), intr, (1600, 1200), cv2.CV_32F)
+
+
         # img = cv2.undistort(img, intr, dist)
         img = np.clip(np.rint(img * 255), 0, 255).astype(np.uint8) # Quantize to np.uint8
-
+        utils.save_image("test.png", img)
         utils.display_image(img)
-        # utils.save_image("test.png")
-        imageio.imsave('face.png', img)
-        break
+        input()
+        return
+
+        # imageio.imsave('face.png', img)
 
 # ---------------------------------------------------------------------------------------
 

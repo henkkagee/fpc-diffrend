@@ -8,6 +8,7 @@ import numpy as np
 import torch
 import imageio
 from PIL import Image
+import cv2 as cv2
 
 # local
 import src.torch.utils as utils
@@ -205,7 +206,7 @@ def fit_pose(max_iter           = 10000,
         camname = cam.split("_")[1]
         calib = calibs[camname]
         intr = np.asarray(calib['intrinsic'], dtype=np.float32)
-        # dist = np.asarray(calib['distortion'], dtype=np.float32)
+        dist = np.asarray(calib['distortion'], dtype=np.float32)
         rot = np.asarray(calib['rotation'], dtype=np.float32)
         trans = np.asarray(calib['translation'], dtype=np.float32)
 
@@ -215,6 +216,7 @@ def fit_pose(max_iter           = 10000,
         for frame in frames:
             # reference image to render against
             img = np.array(Image.open(os.path.join(camdir, frame)))
+            img = cv2.undistort(img, intr, dist)
             # ref = torch.from_numpy(np.flip(img, 0).copy()).cuda()
             ref = torch.from_numpy(img).cuda()
 
@@ -303,7 +305,7 @@ def fit_pose(max_iter           = 10000,
 
 def main():
 
-    path = r"C:\Users\Henkka\Projects\invrend-fpc\data\calibration\2021-07-01\calibration.json"
+    path = r"C:\Users\Henkka\Projects\invrend-fpc\data\calibration\2018-11-15\calibration_test_DI.json"
     with open(path) as json_file:
         calibs = json.load(json_file)
 
@@ -317,7 +319,7 @@ def main():
         log_fn='log.txt',
         mp4save_interval=10,
         mp4save_fn='progress.mp4',
-        basemeshpath=r"C:\Users\Henkka\Projects\invrend-fpc\data\cube\rubiks_bl.obj",
+        basemeshpath=r"C:\Users\Henkka\Projects\invrend-fpc\data\cube\rubiks_fixed.obj",
         imdir=r"C:\Users\Henkka\Projects\invrend-fpc\data\cube\20220310\neutrals\rubik_cube\neutral\take0001\fullres",
         calibs=calibs,
         texpath=r"C:\Users\Henkka\Projects\invrend-fpc\data\cube\rubiks.png",

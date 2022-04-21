@@ -40,25 +40,21 @@ def calibrate(objpoints, imgpoints, img, xml_cam):
     assert imgpoints.shape[0] == objpoints.shape[0]
     assert img is not None
 
-
-    print(xml_cam)
-    print(xml_cam)
-    print(xml_cam[0])
-    print(xml_cam[0].getchildren())
     # initial guess for intrinsic matrix and distCoeffs
     intrmatrix = np.array([[6700.0, 0.0, 800.0], [0.0, 6700.0, 600.0], [0.0, 0.0, 1.0]], dtype=np.float32)
     # intrmatrix = np.array([float(x[1]) for x in xml_cam[0].getchildren()[0].items()], dtype=np.float32).reshape((3,3))
-    distCoeffs = np.array([float(x[1]) for x in xml_cam[0].getchildren()[1].items()] + [0.0], dtype=np.float32)
+    # distCoeffs = np.array([float(x[1]) for x in xml_cam[0].getchildren()[1].items()] + [0.0], dtype=np.float32)
+    distCoeffs = np.array([0.0, 0.0, 0.0, 0.0, 0.0], dtype=np.float32)
 
     ret, mtx, dist, rvecs, tvecs = cv2.calibrateCamera(objpoints, imgpoints, img.shape[::-1], intrmatrix, distCoeffs,
                                                        flags= cv2.CALIB_ZERO_TANGENT_DIST |
-                                                        cv2.CALIB_USE_INTRINSIC_GUESS )
-                                                        # cv2.CALIB_FIX_K1 | cv2.CALIB_FIX_K2
-                                                        # | cv2.CALIB_FIX_K3)
+                                                        cv2.CALIB_USE_INTRINSIC_GUESS |
+                                                        cv2.CALIB_FIX_K1 | cv2.CALIB_FIX_K2
+                                                        | cv2.CALIB_FIX_K3)
     print(f"mtx: {mtx}")
     print(f"dist: {dist}")
-    print(f"rvecs: {rvecs[0]}")
-    print(f"tvecs: {tvecs[0]}")
+    print(f"rvecs: {rvecs[1]}")
+    print(f"tvecs: {tvecs[1]}")
     rmat = np.asarray([[0, 0, 0],
                        [0, 0, 0],
                        [0, 0, 0]], dtype=np.float64)
@@ -78,7 +74,8 @@ for y in range(9, -10, -2):
     x = [x for x in range(-9, 10, 2)]
     objpoints.append(list([list(a) for a in zip(x, [y] * 10, [0] * 10)]))
 objpoints = [i for sub in objpoints for i in sub]
-objpoints = [objpoints] * 9
+print(f"objpoints:\n{objpoints}")
+objpoints = [objpoints] * 18
 objpoints = np.asarray(objpoints, dtype=np.float32)
 
 # Blob detector for better circle center detection
@@ -92,7 +89,7 @@ calibdict = {}
 imgpoints = []  # 2d points in image plane.
 img = None
 prevcamname = "pod1primary"
-path = "C:/Users/Henkka/Projects/invrend-fpc/data/calibration/2021-07-01/extracted"
+path = "C:/Users/Henkka/Projects/invrend-fpc/data/calibration/combined/extracted"
 # path = "C:/Users/Henkka/Projects/invrend-fpc/data/calibration/2021-07-01"
 # path = r"\\rmd.remedy.fi\Capture\System\RAW\Calibrations\2021-12-07"
 images = os.listdir(path)
@@ -111,7 +108,7 @@ for fname in images:
 
     # assume images are processed in camera order
     if camname != prevcamname:
-        # all (9) images from one camera have been processed
+        # all images from one camera have been processed
         realcamname = changeCamName(prevcamname)
         print("Calibrating...")
         calibdict[realcamname] = calibrate(objpoints, imgpoints, img, [x for x in xml_cams if x.get('name') == camname+"_0001"][0])
@@ -158,7 +155,7 @@ realcamname = changeCamName(prevcamname)
 calibdict[realcamname] = calibrate(objpoints, imgpoints, img, [x for x in xml_cams if x.get('name') == camname+"_0001"][0])
 
 # save calibration file
-json.dump(calibdict, codecs.open("C:/Users/Henkka/Projects/invrend-fpc/data/calibration/2021-07-01/calibration_di_distort.json",
+json.dump(calibdict, codecs.open("C:/Users/Henkka/Projects/invrend-fpc/data/calibration/combined/calibration.json",
                                  'w', encoding='utf-8'),
           separators=(',', ':'),
           sort_keys=True,
