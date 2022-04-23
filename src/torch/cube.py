@@ -188,8 +188,8 @@ def fit_cube(max_iter          = 5000,
         for frame in frames:
             # reference image to render against
             img = np.array(Image.open(os.path.join(camdir, frame)))
-            # ref = torch.from_numpy(np.flip(img, 0).copy()).cuda()
-            ref = torch.from_numpy(img).cuda()
+            ref = torch.from_numpy(np.flip(img, 0).copy()).cuda()
+            # ref = torch.from_numpy(img).cuda()
 
             # lens distortion handled as preprocess in reference images
             projection = torch.tensor(camera.intrinsic_to_projection(intr), dtype=torch.float32, device='cuda')

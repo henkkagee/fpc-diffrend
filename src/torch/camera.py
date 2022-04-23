@@ -120,3 +120,12 @@ def translate(x, y, z):
                      [0, 0, 1, z],
                      [0, 0, 0, 1]]).astype(np.float32)
 
+# -------------------------------------------------------------------------------------------------
+
+def translate_tensor(vec):
+    mat = torch.zeros((4,4), dtype=torch.float32, device='cuda')
+    mat[(0, 1, 2, 3), (0, 1, 2, 3)] = torch.ones(4, dtype=torch.float32, device='cuda')
+    # assign xyz translation values into mat to preserve gradients
+    # print(f"vec: {vec.shape}\nreshape: {vec.reshape((3,1)).shape}")
+    mat[(0, 1, 2), (3, 3, 3)] = torch.flatten(vec)
+    return mat
