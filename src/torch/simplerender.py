@@ -22,7 +22,7 @@ def simple_render():
     path = r"C:\Users\Henkka\Projects\invrend-fpc\data\calibration\combined\calibration.json"
     with open(path) as json_file:
         calibs = json.load(json_file)
-    calib = calibs['pod3texture']
+    calib = calibs['pod3secondary']
     intr = np.asarray(calib['intrinsic'], dtype=np.float32)
     dist = np.asarray(calib['distortion'], dtype=np.float32)
     rot = np.asarray(calib['rotation'], dtype=np.float32)
