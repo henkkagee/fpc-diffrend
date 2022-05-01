@@ -15,7 +15,7 @@ def run():
         display_interval=1,
         log_interval=100,
         imdir=r"C:\Users\Henkka\Projects\invrend-fpc\data\reference\rom\take0001\20191106_ilkvil_ML_ROM_take0001_pod2colour_range01",
-        calibpath=r"C:\Users\Henkka\Projects\invrend-fpc\data\calibration\2021-07-01\calibration.json",
+        calibpath=r"C:\Users\Henkka\Projects\invrend-fpc\data\calibration\combined\calibration.json",
         enable_mip=False,
         max_mip_level=6,
         texshape=(1024, 1024, 1),

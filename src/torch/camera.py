@@ -33,10 +33,6 @@ def intrinsic_to_projection(intr=None, zn=0.1, zf=200):
     :return: 4x4 projection matrix
     """
 
-    """return np.array([[(2 * intr[0,0])/(2 * intr[0,2]), 0, 0, 0],
-                     [0, (2 * intr[1,1])/(2 * intr[1,2]), 0, 0],
-                     [0, 0, -(zf + zn) / (zf - zn), -(2 * zf * zn) / (zf - zn)],
-                     [0, 0, -1, 0]]).astype(np.float32)"""
     return np.array([[intr[0, 0]/intr[0, 2], 0, 0, 0],
                      [0, intr[1, 1]/intr[1, 2], 0, 0],
                      [0, 0, -(zf + zn) / (zf - zn), -(2 * zf * zn) / (zf - zn)],
@@ -57,13 +53,6 @@ def extrinsic_to_modelview(rmat=None, tvec=None):
     rt = np.append(rmat, tvec, axis=1)
     br = np.array([0, 0, 0, 1], dtype=np.float32)
     mdv = np.vstack((rt, br))
-    # mdv[0, 1] *= -1
-    # mdv[0, 2] *= -1
-    # mdv[1, 0] *= -1
-    # mdv[2, 0] *= -1
-    # mdv[1, 3] *= -1
-    # mdv[2, 3] *= -1
-    # -------------
     mdv[1, 0] *= -1
     mdv[1, 1] *= -1
     mdv[1, 2] *= -1

@@ -47,7 +47,7 @@ def blend(v_base, maps, dataset, frames):
     :return: Blended mesh vertex positions of shape [3*v], (x,y,z,x,...)
     """
     if 'global' not in dataset:
-        print(f"shapes:\nv_base[{v_base.shape}\ndataset['local][{dataset['local'].shape}]\nmaps['local][{maps['local'].shape}]\nframes[{frames.shape}]")
+        # print(f"shapes:\nv_base[{v_base.shape}\ndataset['local][{dataset['local'].shape}]\nmaps['local][{maps['local'].shape}]\nframes[{frames.shape}]")
         bl_res = torch.matmul(dataset['local'], maps['local'])
         mapped = torch.matmul(bl_res, frames)
         vtx_pos = torch.add(v_base, mapped)
@@ -84,7 +84,7 @@ def render(glctx, mtx, pos, pos_idx, uv, uv_idx, tex, resolution, enable_mip, ma
 
     colour = dr.antialias(colour, rast_out, pos_clip, pos_idx)
     # colour = colour * torch.clamp(rast_out[..., -1:], 0, 1)
-    colour = torch.where(rast_out[..., 3:] > 0, colour, torch.tensor(36.0 / 255.0).cuda())
+    colour = torch.where(rast_out[..., 3:] > 0, colour, torch.tensor(45.0 / 255.0).cuda())
     return colour[0]
 
 # -------------------------------------------------------------------------------------------------
@@ -176,6 +176,9 @@ def fitTake(max_iter, lr_base, lr_ramp, basemeshpath, localblpath, globalblpath,
     uv_idx = torch.tensor(basemesh.fuv, dtype=torch.int32, device='cuda')
     tex = np.random.uniform(low=0.0, high=1.0, size=texshape)
     tex_opt = torch.tensor(tex, dtype=torch.float32, device='cuda', requires_grad=True)
+    x_opt = torch.tensor([0.0], dtype=torch.float32, device='cuda', requires_grad=True)
+    y_opt = torch.tensor([0.0], dtype=torch.float32, device='cuda', requires_grad=True)
+    z_opt = torch.tensor([0.0], dtype=torch.float32, device='cuda', requires_grad=True)
 
     # blendshapes and mappings
     n_vertices_x3 = v_base.shape[0]
@@ -184,7 +187,7 @@ def fitTake(max_iter, lr_base, lr_ramp, basemeshpath, localblpath, globalblpath,
     # context and optimizer
     print("Setting up RasterizeGLContext and optimizer...")
     glctx = dr.RasterizeGLContext()
-    optimizer = torch.optim.Adam([maps['local'], tex_opt], lr=lr_base)
+    optimizer = torch.optim.Adam([tex_opt, x_opt, y_opt, z_opt], lr=lr_base)     # [maps['local'],
     scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer, lr_lambda=lambda x: lr_ramp**(float(x)/float(max_iter)))
 
     # starting camera iteration
@@ -204,7 +207,7 @@ def fitTake(max_iter, lr_base, lr_ramp, basemeshpath, localblpath, globalblpath,
             # reference image to render against
             img = np.array(Image.open(os.path.join(camdir, frame)))
             # img = cv2.undistort(img, intr, dist)
-            ref = torch.from_numpy(img).cuda()
+            ref = torch.from_numpy(np.flip(img, 0).copy()).cuda()
             ref = ref.reshape((ref.shape[0], ref.shape[1], 1))
 
             # set one-hot frame index
@@ -215,13 +218,22 @@ def fitTake(max_iter, lr_base, lr_ramp, basemeshpath, localblpath, globalblpath,
             # TODO: how to incorporate camera distortion parameters in projection? in shaders?
             # lens distortion currently handled as preprocess in reference images
             projection = camera.intrinsic_to_projection(intr)
+            proj = torch.from_numpy(projection).cuda()
             modelview = camera.extrinsic_to_modelview(rot, trans)
-            trans = torch.tensor(camera.translate(0.0, -173.0, 0.0), dtype=torch.float32, device='cuda')
+            trans = torch.tensor(camera.translate(0.0, 0.0, 0.0), dtype=torch.float32, device='cuda')
             t_mv = torch.matmul(torch.from_numpy(modelview).cuda(), trans)
             mvp = torch.matmul(torch.from_numpy(projection).cuda(), t_mv)
 
             # render
             for it in range(max_iter + 1):
+
+                transvec = torch.zeros(3, dtype=torch.float32, device='cuda')
+                transvec[0] = x_opt
+                transvec[1] = y_opt
+                transvec[2] = z_opt
+                tr = torch.matmul(t_mv, camera.translate_tensor(transvec))
+                mvp = torch.matmul(proj, t_mv)
+
                 # get blended vertex positions according to eq.
                 vtx_pos = blend(v_base, maps, datasets, v_f).cuda()
                 # split [n_vertices * 3] to [n_vertices, 3] as a view of the original tensor
@@ -247,13 +259,12 @@ def fitTake(max_iter, lr_base, lr_ramp, basemeshpath, localblpath, globalblpath,
                 display_image = (display_interval and (it % display_interval == 0)) or it == max_iter
                 if display_image:
                     img_ref = ref.cpu().numpy()
-                    img_ref = np.array(img_ref.copy(), dtype=np.float32) / 255
+                    img_ref = np.flip(np.array(img_ref.copy(), dtype=np.float32) / 255, 0)
                     img_col = np.flip(colour.cpu().detach().numpy(), 0)
                     result_image = utils.make_img(np.stack([img_ref, img_col]))
                     utils.display_image(result_image)
 
                     # img_out = colour[0].cpu().numpy()
                     # utils.display_image(img_out, size=img.shape[::-1])
-                input()
             utils.save_image(os.path.join(out_dir, frame), img_col)
             v_f[framenum] = 0

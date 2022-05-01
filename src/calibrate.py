@@ -118,13 +118,13 @@ for fname in images:
     # invert, blur, and threshold filter for easier circle detection
     img = cv2.imread(f"{path}/{fname}", flags=cv2.IMREAD_GRAYSCALE)
     img = cv2.bitwise_not(img)
-    kernel = np.ones((5, 5), np.float32) / 25
+    kernel = np.ones((3, 3), np.float32) / 25
     preimg = cv2.filter2D(img, -1, kernel)
 
     # Find the circle centers
     # TODO: one could also do blobDetector.detect() and drawKeypoints() before findCirclesGrid() for easier detection
     for thres in thresholds:
-        ret, img = cv2.threshold(preimg, thres, 255, cv2.THRESH_BINARY)
+        ret, img = cv2.threshold(img, thres, 255, cv2.THRESH_BINARY)
         cv2.imshow('thresh', img)
         cv2.waitKey(100)
         ret, centers = cv2.findCirclesGrid(img, np.asarray([10, 10]))
@@ -155,7 +155,7 @@ realcamname = changeCamName(prevcamname)
 calibdict[realcamname] = calibrate(objpoints, imgpoints, img, [x for x in xml_cams if x.get('name') == camname+"_0001"][0])
 
 # save calibration file
-json.dump(calibdict, codecs.open("C:/Users/Henkka/Projects/invrend-fpc/data/calibration/combined/calibration.json",
+json.dump(calibdict, codecs.open("C:/Users/Henkka/Projects/invrend-fpc/data/calibration/combined/calibration_noblur.json",
                                  'w', encoding='utf-8'),
           separators=(',', ':'),
           sort_keys=True,
