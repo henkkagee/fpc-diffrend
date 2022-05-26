@@ -4,6 +4,17 @@ from PIL import Image
 
 # -------------------------------------------------------------------------------------------------
 
+def gaussian_filter(kernlen, std):
+    """
+    Returns a 2D Gaussian kernel array.
+
+    :param kernlen: Kernel length, sam
+    :param std:
+    :return:
+    """
+
+# -------------------------------------------------------------------------------------------------
+
 
 def assert_num_frames(cams, imdir):
     """

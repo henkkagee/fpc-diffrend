@@ -22,7 +22,7 @@ def transform_clip(mvp, pos):
 
 # -------------------------------------------------------------------------------------------------
 
-def intrinsic_to_projection(intr=None, zn=0.1, zf=200):
+def intrinsic_to_projection(intr=None, zn=0.01, zf=200):
     """
     Get OpenGL projection matrix from intrinsic camera parameters.
 
@@ -118,3 +118,11 @@ def translate_tensor(vec):
     # print(f"vec: {vec.shape}\nreshape: {vec.reshape((3,1)).shape}")
     mat[(0, 1, 2), (3, 3, 3)] = torch.flatten(vec)
     return mat
+
+# -------------------------------------------------------------------------------------------------
+
+def rigid_grad(tvec, rotmat):
+    rt = torch.cat((rotmat, torch.reshape(tvec, (3, 1))), 1)
+    br = torch.tensor([0, 0, 0, 1], dtype=torch.float32, device='cuda')
+    transform = torch.cat((rt, torch.reshape(br, (1, 4))), 0)
+    return transform

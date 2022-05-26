@@ -7,7 +7,8 @@ import numpy as np
 import torch
 import nvdiffrast.torch as dr
 from PIL import Image
-import cv2
+import roma as roma
+import imageio
 
 # local
 import src.torch.data as data
@@ -137,7 +138,8 @@ def setup_dataset(localblpath, globalblpath, n_frames, n_vertices_x3):
 
 
 def fitTake(max_iter, lr_base, lr_ramp, basemeshpath, localblpath, globalblpath, display_interval,
-            log_interval, imdir, calibpath, enable_mip, max_mip_level, texshape, out_dir, resolution):
+            log_interval, imdir, calibpath, enable_mip, max_mip_level, texshape, out_dir, resolution,
+            mp4_interval):
     """
     Fit one take (continuous range of frames).
 
@@ -157,8 +159,16 @@ def fitTake(max_iter, lr_base, lr_ramp, basemeshpath, localblpath, globalblpath,
     :param texshape: Shape of the texture with resolution and channels (height, width, channels)
     :param out_dir: Directory to save result data to
     :param resolution: Resolution to render in (height, width)
+    :param mp4_interval: Interval in which to save mp4 frames. 0 for no mp4 saving.
     :return:
     """
+
+    if mp4_interval:
+        writer = imageio.get_writer(f'{out_dir}/progress.mp4', mode='I', fps=30, codec='libx264', bitrate='16M')
+    else:
+        writer = None
+
+    flip_opt_interval = 100
 
     cams = os.listdir(imdir)
     n_frames = assertNumFrames(cams, imdir)
@@ -175,10 +185,10 @@ def fitTake(max_iter, lr_base, lr_ramp, basemeshpath, localblpath, globalblpath,
     uv = torch.tensor(basemesh.uv, dtype=torch.float32, device='cuda')
     uv_idx = torch.tensor(basemesh.fuv, dtype=torch.int32, device='cuda')
     tex = np.random.uniform(low=0.0, high=1.0, size=texshape)
-    tex_opt = torch.tensor(tex, dtype=torch.float32, device='cuda', requires_grad=True)
-    x_opt = torch.tensor([0.0], dtype=torch.float32, device='cuda', requires_grad=True)
-    y_opt = torch.tensor([0.0], dtype=torch.float32, device='cuda', requires_grad=True)
-    z_opt = torch.tensor([0.0], dtype=torch.float32, device='cuda', requires_grad=True)
+    tex_opt = torch.tensor(tex, dtype=torch.float32, device='cuda', requires_grad=False)
+    t_opt = torch.tensor([0.0, 0.0, 0.0], dtype=torch.float32, device='cuda', requires_grad=True)
+    # we can't init the rotation to exactly 0.0 as the gradients are then not stable
+    rotvec_opt = torch.tensor([0.01, 0.01, 0.01], dtype=torch.float32, device='cuda', requires_grad=True)
 
     # blendshapes and mappings
     n_vertices_x3 = v_base.shape[0]
@@ -187,7 +197,7 @@ def fitTake(max_iter, lr_base, lr_ramp, basemeshpath, localblpath, globalblpath,
     # context and optimizer
     print("Setting up RasterizeGLContext and optimizer...")
     glctx = dr.RasterizeGLContext()
-    optimizer = torch.optim.Adam([tex_opt, x_opt, y_opt, z_opt], lr=lr_base)     # [maps['local'],
+    optimizer = torch.optim.Adam([tex_opt, t_opt, rotvec_opt], lr=lr_base)     # [maps['local'],
     scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer, lr_lambda=lambda x: lr_ramp**(float(x)/float(max_iter)))
 
     # starting camera iteration
@@ -226,21 +236,20 @@ def fitTake(max_iter, lr_base, lr_ramp, basemeshpath, localblpath, globalblpath,
 
             # render
             for it in range(max_iter + 1):
-
-                transvec = torch.zeros(3, dtype=torch.float32, device='cuda')
-                transvec[0] = x_opt
-                transvec[1] = y_opt
-                transvec[2] = z_opt
-                tr = torch.matmul(t_mv, camera.translate_tensor(transvec))
-                mvp = torch.matmul(proj, t_mv)
+                rigid_trans = camera.rigid_grad(t_opt*0.1, roma.rotvec_to_rotmat(rotvec_opt*0.2))
+                tr = torch.matmul(rigid_trans, t_mv)
+                mvp = torch.matmul(proj, tr)
 
                 # get blended vertex positions according to eq.
-                vtx_pos = blend(v_base, maps, datasets, v_f).cuda()
+                vtx_pos = blend(v_base, maps, datasets, v_f)
                 # split [n_vertices * 3] to [n_vertices, 3] as a view of the original tensor
                 vtx_pos_split = torch.reshape(vtx_pos, (vtx_pos.shape[0] // 3, 3))
 
                 # render
                 colour = render(glctx, mvp, vtx_pos_split, pos_idx, uv, uv_idx, tex_opt, resolution, enable_mip, max_mip_level)
+
+                # if we're optimizing pose, add blur for more tractable optimization landscape
+                # gaussian = torch.conv2d()
 
                 # Compute loss and train.
                 # TODO: add activation constraints (L1 sparsity)
@@ -255,16 +264,30 @@ def fitTake(max_iter, lr_base, lr_ramp, basemeshpath, localblpath, globalblpath,
                 if log:
                     print(f"It[{it}] - Loss: {loss} - pos_vtx[1]: {vtx_pos_split[0]} - avg_act: {torch.mean(maps['local'][framenum])}")
 
+                # change the target of optimization
+                if it % flip_opt_interval == 0:
+                    tex_opt.requires_grad = not tex_opt.requires_grad
+                    t_opt.requires_grad = not t_opt.requires_grad
+                    rotvec_opt.requires_grad = not rotvec_opt.requires_grad
+
                 # Show/save image.
                 display_image = (display_interval and (it % display_interval == 0)) or it == max_iter
-                if display_image:
+                save_mp4 = (mp4_interval and (it % mp4_interval == 0))
+                if display_image or save_mp4:
                     img_ref = ref.cpu().numpy()
                     img_ref = np.flip(np.array(img_ref.copy(), dtype=np.float32) / 255, 0)
                     img_col = np.flip(colour.cpu().detach().numpy(), 0)
                     result_image = utils.make_img(np.stack([img_ref, img_col]))
-                    utils.display_image(result_image)
-
+                    if display_image:
+                        utils.display_image(result_image)
+                    if save_mp4:
+                        writer.append_data(np.clip(np.rint(result_image * 255.0), 0, 255).astype(np.uint8))
                     # img_out = colour[0].cpu().numpy()
                     # utils.display_image(img_out, size=img.shape[::-1])
-            utils.save_image(os.path.join(out_dir, frame), img_col)
+            # utils.save_image(os.path.join(out_dir, frame), img_col)
             v_f[framenum] = 0
+            break
+        break
+
+    if writer is not None:
+        writer.close()
