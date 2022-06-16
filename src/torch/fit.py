@@ -49,9 +49,11 @@ def blend(v_base, maps, dataset, frames):
     """
     if 'global' not in dataset:
         # print(f"shapes:\nv_base[{v_base.shape}\ndataset['local][{dataset['local'].shape}]\nmaps['local][{maps['local'].shape}]\nframes[{frames.shape}]")
-        bl_res = torch.matmul(dataset['local'], maps['local'])
-        mapped = torch.matmul(bl_res, frames)
-        vtx_pos = torch.add(v_base, mapped)
+        """bl_res = torch.matmul(dataset['local'], maps['local'])
+        mapped = torch.matmul(bl_res, frames)"""
+        mapped = torch.matmul(maps['local'], frames)
+        bl_res = torch.matmul(dataset['local'], mapped)
+        vtx_pos = torch.add(v_base, bl_res)
         return vtx_pos
 
 # -------------------------------------------------------------------------------------------------
@@ -91,7 +93,7 @@ def render(glctx, mtx, pos, pos_idx, uv, uv_idx, tex, resolution, enable_mip, ma
 # -------------------------------------------------------------------------------------------------
 
 
-def setup_dataset(localblpath, globalblpath, n_frames, n_vertices_x3):
+def setup_dataset(localblpath, globalblpath, n_frames, n_vertices_x3, v_basemesh):
     """
     Set up dataset of blendshapes/ml dataset frames and corresponding mappings
 
@@ -121,15 +123,15 @@ def setup_dataset(localblpath, globalblpath, n_frames, n_vertices_x3):
                 for line in f:
                     if line.startswith("v "):
                         vertices.extend([float(x) for x in line.strip().split(" ")[1:]])
-            localbl[i] = np.asarray(vertices, dtype=np.float32)
+            # per-vertex deltas
+            localbl[i] = np.subtract(np.asarray(vertices, dtype=np.float32), v_basemesh)
 
         # shapes
         m_3vb = torch.tensor(localbl.transpose(), dtype=torch.float32, device='cuda')
         datasets['local'] = m_3vb
 
         # mappings
-        m_bf_face = torch.tensor(np.zeros((n_meshes, n_frames)), dtype=torch.float32,
-                                 device='cuda', requires_grad=True)
+        m_bf_face = torch.zeros(n_meshes, n_frames, dtype=torch.float32, device='cuda', requires_grad=True)
         maps['local'] = m_bf_face
 
     return datasets, maps, torch.zeros(n_frames, dtype=torch.float32, device='cuda')
@@ -185,19 +187,19 @@ def fitTake(max_iter, lr_base, lr_ramp, basemeshpath, localblpath, globalblpath,
     uv = torch.tensor(basemesh.uv, dtype=torch.float32, device='cuda')
     uv_idx = torch.tensor(basemesh.fuv, dtype=torch.int32, device='cuda')
     tex = np.random.uniform(low=0.0, high=1.0, size=texshape)
-    tex_opt = torch.tensor(tex, dtype=torch.float32, device='cuda', requires_grad=False)
-    t_opt = torch.tensor([0.0, 0.0, 0.0], dtype=torch.float32, device='cuda', requires_grad=True)
+    tex_opt = torch.tensor(tex, dtype=torch.float32, device='cuda', requires_grad=True)
+    t_opt = torch.tensor([0.0, 0.0, 0.0], dtype=torch.float32, device='cuda', requires_grad=False)
     # we can't init the rotation to exactly 0.0 as the gradients are then not stable
-    rotvec_opt = torch.tensor([0.01, 0.01, 0.01], dtype=torch.float32, device='cuda', requires_grad=True)
+    rotvec_opt = torch.tensor([0.01, 0.01, 0.01], dtype=torch.float32, device='cuda', requires_grad=False)
 
     # blendshapes and mappings
     n_vertices_x3 = v_base.shape[0]
-    datasets, maps, v_f = setup_dataset(localblpath, globalblpath, n_frames, n_vertices_x3)
+    datasets, maps, v_f = setup_dataset(localblpath, globalblpath, n_frames, n_vertices_x3, basemesh.vertices)
 
     # context and optimizer
     print("Setting up RasterizeGLContext and optimizer...")
     glctx = dr.RasterizeGLContext()
-    optimizer = torch.optim.Adam([tex_opt, t_opt, rotvec_opt], lr=lr_base)     # [maps['local'],
+    optimizer = torch.optim.Adam([tex_opt, maps['local']], lr=lr_base)
     scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer, lr_lambda=lambda x: lr_ramp**(float(x)/float(max_iter)))
 
     # starting camera iteration
@@ -222,7 +224,7 @@ def fitTake(max_iter, lr_base, lr_ramp, basemeshpath, localblpath, globalblpath,
 
             # set one-hot frame index
             framenum = int(os.path.splitext(frame)[0].split("_")[-1])
-            v_f[framenum] = 1
+            v_f[framenum] = 1.0
 
             # modelview and projection
             # TODO: how to incorporate camera distortion parameters in projection? in shaders?
@@ -262,13 +264,14 @@ def fitTake(max_iter, lr_base, lr_ramp, basemeshpath, localblpath, globalblpath,
                 # Print loss logging
                 log = (log_interval and (it % log_interval == 0))
                 if log:
-                    print(f"It[{it}] - Loss: {loss} - pos_vtx[1]: {vtx_pos_split[0]} - avg_act: {torch.mean(maps['local'][framenum])}")
+                    print(f"It[{it}] - Loss: {loss} - pos_vtx[1]: {vtx_pos_split[0]} - avg_act: {torch.mean(maps['local'][framenum])}"
+                          f" - max_act: {torch.max(maps['local'][framenum])}")
 
                 # change the target of optimization
-                if it % flip_opt_interval == 0:
+                """if it % flip_opt_interval == 0:
                     tex_opt.requires_grad = not tex_opt.requires_grad
                     t_opt.requires_grad = not t_opt.requires_grad
-                    rotvec_opt.requires_grad = not rotvec_opt.requires_grad
+                    rotvec_opt.requires_grad = not rotvec_opt.requires_grad"""
 
                 # Show/save image.
                 display_image = (display_interval and (it % display_interval == 0)) or it == max_iter
@@ -285,7 +288,7 @@ def fitTake(max_iter, lr_base, lr_ramp, basemeshpath, localblpath, globalblpath,
                     # img_out = colour[0].cpu().numpy()
                     # utils.display_image(img_out, size=img.shape[::-1])
             # utils.save_image(os.path.join(out_dir, frame), img_col)
-            v_f[framenum] = 0
+            v_f[framenum] = 0.0
             break
         break
 

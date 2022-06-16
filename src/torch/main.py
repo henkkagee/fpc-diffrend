@@ -13,7 +13,7 @@ def run():
         localblpath=r"C:\Users\Henkka\Projects\invrend-fpc\data\ilkvil_blendshapes",
         globalblpath="",
         display_interval=1,
-        log_interval=100,
+        log_interval=1,
         imdir=r"C:\Users\Henkka\Projects\invrend-fpc\data\reference\rom\take0001\20191106_ilkvil_ML_ROM_take0001_pod2colour_range01",
         calibpath=r"C:\Users\Henkka\Projects\invrend-fpc\data\calibration\combined\calibration.json",
         enable_mip=False,
@@ -21,7 +21,7 @@ def run():
         texshape=(1024, 1024, 1),
         out_dir=r"C:\Users\Henkka\Projects\invrend-fpc\data\out_img\take0001",
         resolution=(1600, 1200),
-        mp4_interval=2
+        mp4_interval=0
     )
 
 # -----------------------------------------------------------
