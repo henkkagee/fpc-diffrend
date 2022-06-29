@@ -205,8 +205,12 @@ def fitTake(max_iter, lr_base, lr_ramp, basemeshpath, localblpath, globalblpath,
     # context and optimizer
     print("Setting up RasterizeGLContext and optimizer...")
     glctx = dr.RasterizeGLContext()
-    optimizer = torch.optim.Adam([tex_opt, maps['local']], lr=lr_base)
+
+    # ================================================================
+    # REMEMBER TO UPDATE THIS TO OPTIMIZE DIFFERENT PARAMETERS
+    optimizer = torch.optim.Adam([tex_opt, maps['local'], t_opt, rotvec_opt], lr=lr_base)
     scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer, lr_lambda=lambda x: lr_ramp**(float(x)/float(max_iter)))
+    # ================================================================
 
     # starting camera iteration
     for cam in cams:
@@ -243,8 +247,8 @@ def fitTake(max_iter, lr_base, lr_ramp, basemeshpath, localblpath, globalblpath,
 
             # render
             for it in range(max_iter + 1):
-                rigid_trans = camera.rigid_grad(t_opt*0.5, roma.rotvec_to_rotmat(rotvec_opt*0.5))
-                print(f"t_opt: {t_opt} --- rotvec_opt: {rotvec_opt} --- rigid_trans: {rigid_trans}")
+                rigid_trans = camera.rigid_grad(t_opt*0.1, roma.rotvec_to_rotmat(rotvec_opt*0.1))
+                # print(f"t_opt: {t_opt} --- rotvec_opt: {rotvec_opt} --- rigid_trans: {rigid_trans}")
                 tr = torch.matmul(rigid_trans, t_mv)
                 mvp = torch.matmul(proj, tr)
 
