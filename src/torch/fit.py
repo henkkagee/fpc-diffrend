@@ -131,7 +131,7 @@ def setup_dataset(localblpath, globalblpath, n_frames, n_vertices_x3, v_basemesh
         datasets['local'] = m_3vb
 
         # mappings
-        m_bf_face = torch.zeros(n_meshes, n_frames, dtype=torch.float32, device='cuda', requires_grad=True)
+        m_bf_face = torch.zeros(n_meshes, n_frames, dtype=torch.float32, device='cuda', requires_grad=False)
         maps['local'] = m_bf_face
 
     return datasets, maps, torch.zeros(n_frames, dtype=torch.float32, device='cuda')
@@ -141,7 +141,7 @@ def setup_dataset(localblpath, globalblpath, n_frames, n_vertices_x3, v_basemesh
 
 def fitTake(max_iter, lr_base, lr_ramp, basemeshpath, localblpath, globalblpath, display_interval,
             log_interval, imdir, calibpath, enable_mip, max_mip_level, texshape, out_dir, resolution,
-            mp4_interval):
+            mp4_interval, texpath=""):
     """
     Fit one take (continuous range of frames).
 
@@ -155,7 +155,8 @@ def fitTake(max_iter, lr_base, lr_ramp, basemeshpath, localblpath, globalblpath,
     :param display_interval: Epoch interval for displaying render previews
     :param log_interval: Epoch interval for logging loss
     :param imdir: Image directory to take with structure take/camera/frame
-    :param calibs: Camera calibration dict from calibration file for take in question
+    :param calibpath: Path to camera calibration file
+    :param texpath: Path to initial texture for face
     :param enable_mip: Boolean whether to enable mipmapping
     :param max_mip_level: Limits the number of mipmaps constructed and used in mipmap-based filter modes
     :param texshape: Shape of the texture with resolution and channels (height, width, channels)
@@ -186,11 +187,16 @@ def fitTake(max_iter, lr_base, lr_ramp, basemeshpath, localblpath, globalblpath,
     pos_idx = torch.tensor(basemesh.faces, dtype=torch.int32, device='cuda')
     uv = torch.tensor(basemesh.uv, dtype=torch.float32, device='cuda')
     uv_idx = torch.tensor(basemesh.fuv, dtype=torch.int32, device='cuda')
-    tex = np.random.uniform(low=0.0, high=1.0, size=texshape)
-    tex_opt = torch.tensor(tex, dtype=torch.float32, device='cuda', requires_grad=True)
-    t_opt = torch.tensor([0.0, 0.0, 0.0], dtype=torch.float32, device='cuda', requires_grad=False)
+    if texpath:
+        tex = np.array(Image.open(texpath))/255.0
+        tex = tex[..., np.newaxis]
+        tex = np.flip(tex, 0)
+    else:
+        tex = np.random.uniform(low=0.0, high=1.0, size=texshape)
+    tex_opt = torch.tensor(tex.copy(), dtype=torch.float32, device='cuda', requires_grad=False)
+    t_opt = torch.tensor([0.0, 0.0, 0.0], dtype=torch.float32, device='cuda', requires_grad=True)
     # we can't init the rotation to exactly 0.0 as the gradients are then not stable
-    rotvec_opt = torch.tensor([0.01, 0.01, 0.01], dtype=torch.float32, device='cuda', requires_grad=False)
+    rotvec_opt = torch.tensor([0.01, 0.01, 0.01], dtype=torch.float32, device='cuda', requires_grad=True)
 
     # blendshapes and mappings
     n_vertices_x3 = v_base.shape[0]
@@ -234,11 +240,11 @@ def fitTake(max_iter, lr_base, lr_ramp, basemeshpath, localblpath, globalblpath,
             modelview = camera.extrinsic_to_modelview(rot, trans)
             trans = torch.tensor(camera.translate(0.0, 0.0, 0.0), dtype=torch.float32, device='cuda')
             t_mv = torch.matmul(torch.from_numpy(modelview).cuda(), trans)
-            mvp = torch.matmul(torch.from_numpy(projection).cuda(), t_mv)
 
             # render
             for it in range(max_iter + 1):
-                rigid_trans = camera.rigid_grad(t_opt*0.1, roma.rotvec_to_rotmat(rotvec_opt*0.2))
+                rigid_trans = camera.rigid_grad(t_opt*0.5, roma.rotvec_to_rotmat(rotvec_opt*0.5))
+                print(f"t_opt: {t_opt} --- rotvec_opt: {rotvec_opt} --- rigid_trans: {rigid_trans}")
                 tr = torch.matmul(rigid_trans, t_mv)
                 mvp = torch.matmul(proj, tr)
 
@@ -251,6 +257,7 @@ def fitTake(max_iter, lr_base, lr_ramp, basemeshpath, localblpath, globalblpath,
                 colour = render(glctx, mvp, vtx_pos_split, pos_idx, uv, uv_idx, tex_opt, resolution, enable_mip, max_mip_level)
 
                 # if we're optimizing pose, add blur for more tractable optimization landscape
+                # built-in gaussian not available for torch tensors since we can't use the right torch3d version
                 # gaussian = torch.conv2d()
 
                 # Compute loss and train.

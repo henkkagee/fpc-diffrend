@@ -1,17 +1,33 @@
-import numpy as np
 import os
+import statistics
+
 from PIL import Image
+import numpy as np
+
 
 # -------------------------------------------------------------------------------------------------
 
-def gaussian_filter(kernlen, std):
+def gaussian_filter(arr, kernel_radius):
     """
-    Returns a 2D Gaussian kernel array.
+    Gaussian filter for smoothing out the optimization landscape. Might not work like this
+    since gradients are probably not preserved through the pixel assignment...
 
-    :param kernlen: Kernel length, sam
-    :param std:
+    :param arr: 2D tensor to filter
+    :param kernel_radius: Kernel size in each direction from the center
     :return:
     """
+    for j in range(arr.size[0]):
+        top = max(j - kernel_radius, 0)
+        bottom = min(j + kernel_radius, arr.size[0] - 1)
+        for i in range(arr.size[1]):
+            left = max(i - kernel_radius, 0)
+            right = min(i + kernel_radius, arr.size[1] - 1)
+            vals = []
+            for v in range(top, bottom+1):
+                for u in range(left, right+1):
+                    vals.append(arr[v][u])
+            mean = statistics.mean(vals)
+            arr[j][i] = mean
 
 # -------------------------------------------------------------------------------------------------
 
