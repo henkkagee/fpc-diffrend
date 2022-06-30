@@ -171,7 +171,7 @@ def fitTake(max_iter, lr_base, lr_ramp, basemeshpath, localblpath, globalblpath,
     else:
         writer = None
 
-    flip_opt_interval = 100
+    flip_opt_interval = 500
 
     cams = os.listdir(imdir)
     n_frames = assertNumFrames(cams, imdir)
@@ -207,8 +207,8 @@ def fitTake(max_iter, lr_base, lr_ramp, basemeshpath, localblpath, globalblpath,
     glctx = dr.RasterizeGLContext()
 
     # ================================================================
-    # REMEMBER TO UPDATE THIS TO OPTIMIZE DIFFERENT PARAMETERS
-    optimizer = torch.optim.Adam([tex_opt, maps['local'], t_opt, rotvec_opt], lr=lr_base)
+    # UPDATE PARAMETERS HERE
+    optimizer = torch.optim.Adam([tex_opt, maps['local'], t_opt, rotvec_opt], lr=lr_base, weight_decay=10e-3)
     scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer, lr_lambda=lambda x: lr_ramp**(float(x)/float(max_iter)))
     # ================================================================
 
@@ -247,7 +247,10 @@ def fitTake(max_iter, lr_base, lr_ramp, basemeshpath, localblpath, globalblpath,
 
             # render
             for it in range(max_iter + 1):
-                rigid_trans = camera.rigid_grad(t_opt*0.1, roma.rotvec_to_rotmat(rotvec_opt*0.1))
+                if it < 500:
+                    rigid_trans = camera.rigid_grad(t_opt*0.1, roma.rotvec_to_rotmat(rotvec_opt*0.1))
+                else:
+                    rigid_trans = camera.rigid_grad(t_opt * 0.03, roma.rotvec_to_rotmat(rotvec_opt * 0.03))
                 # print(f"t_opt: {t_opt} --- rotvec_opt: {rotvec_opt} --- rigid_trans: {rigid_trans}")
                 tr = torch.matmul(rigid_trans, t_mv)
                 mvp = torch.matmul(proj, tr)
@@ -262,10 +265,17 @@ def fitTake(max_iter, lr_base, lr_ramp, basemeshpath, localblpath, globalblpath,
 
                 # if we're optimizing pose, add blur for more tractable optimization landscape
                 # built-in gaussian not available for torch tensors since we can't use the right torch3d version
-                # gaussian = torch.conv2d()
+                """if t_opt.requires_grad:
+                    blur = utils.GaussianBlur(kernel_size=11)
+                    ref_blur = blur(ref)
+                    colour_blur = blur(colour)"""
 
                 # Compute loss and train.
                 # TODO: add activation constraints (L1 sparsity)
+                """if t_opt.requires_grad:
+                    loss = torch.mean((ref_blur - colour_blur*255) ** 2)  # L2 pixel loss, *255 to channels from opengl
+                else:
+                    loss = torch.mean((ref - colour*255) ** 2)  # L2 pixel loss, *255 to channels from opengl"""
                 loss = torch.mean((ref - colour*255) ** 2)  # L2 pixel loss, *255 to channels from opengl
                 optimizer.zero_grad()
                 loss.backward()
@@ -279,10 +289,15 @@ def fitTake(max_iter, lr_base, lr_ramp, basemeshpath, localblpath, globalblpath,
                           f" - max_act: {torch.max(maps['local'][framenum])}")
 
                 # change the target of optimization
-                """if it % flip_opt_interval == 0:
-                    tex_opt.requires_grad = not tex_opt.requires_grad
-                    t_opt.requires_grad = not t_opt.requires_grad
-                    rotvec_opt.requires_grad = not rotvec_opt.requires_grad"""
+                if it % flip_opt_interval == 0:
+                    # tex_opt.requires_grad = not tex_opt.requires_grad
+                    if it == 1000:
+                        print("Switched to optimizing blendshape activations!")
+                        maps['local'].requires_grad = True
+                        t_opt.requires_grad = not t_opt.requires_grad
+                        rotvec_opt.requires_grad = not rotvec_opt.requires_grad
+                    elif it >= 4000:
+                        tex_opt.requires_grad = True
 
                 # Show/save image.
                 display_image = (display_interval and (it % display_interval == 0)) or it == max_iter
