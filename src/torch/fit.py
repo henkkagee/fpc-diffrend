@@ -37,24 +37,23 @@ def assertNumFrames(cams, imdir):
 # -------------------------------------------------------------------------------------------------
 
 
-def blend(v_base, maps, dataset, frames):
+def blend(v_base, m1, m2, m3, frames):
     """
-    Get blended vertex positions as in rig eq.
+    Get blended vertex positions from decomposed matrix of vertex positions
 
     :param v_base: Base mesh vertex positions of shape [3*v], (x,y,z,x,...)
-    :param maps: Dict of mappings, one mapping for each dataset: local, global, pca
-    :param dataset: Dict of datasets (blendshapes): local, global, pca
+    :param m1: Mapping from frames to learned vertex deltas
+    :param m2: Mapping from frames to learned vertex deltas
+    :param m3: Learned basis of vertex deltas
     :param frames: One-hot vector of frame index, with value at frame i being 1.
     :return: Blended mesh vertex positions of shape [3*v], (x,y,z,x,...)
     """
-    if 'global' not in dataset:
-        # print(f"shapes:\nv_base[{v_base.shape}\ndataset['local][{dataset['local'].shape}]\nmaps['local][{maps['local'].shape}]\nframes[{frames.shape}]")
-        """bl_res = torch.matmul(dataset['local'], maps['local'])
-        mapped = torch.matmul(bl_res, frames)"""
-        mapped = torch.matmul(maps['local'], frames)
-        bl_res = torch.matmul(dataset['local'], mapped)
-        vtx_pos = torch.add(v_base, bl_res)
-        return vtx_pos
+
+    mapped = torch.matmul(m1, frames)
+    basis = torch.matmul(m2, mapped)
+    prod = torch.matmul(m3, basis)
+    vtx_pos = torch.add(v_base, prod)
+    return vtx_pos
 
 # -------------------------------------------------------------------------------------------------
 
@@ -93,48 +92,21 @@ def render(glctx, mtx, pos, pos_idx, uv, uv_idx, tex, resolution, enable_mip, ma
 # -------------------------------------------------------------------------------------------------
 
 
-def setup_dataset(localblpath, globalblpath, n_frames, n_vertices_x3, v_basemesh):
+def setup_dataset(n_frames, n_vertices_x3):
     """
-    Set up dataset of blendshapes/ml dataset frames and corresponding mappings
+    Set up dataset of vertex matrix decomposition with v_i = v_base + m3*m2*m1*frames.
 
-    local num_localbls*3v
-    global num_globalbls*3v
+    m3 can be seen as the learned basis for mesh deltas, m1 and m2 as mapping from frame index to this
+    basis. Finding the geometry in optimization thus corresponds to finding values for m1, m2 and m3.
 
     :return:
     """
-    datasets = {}
-    maps = {}
-    if globalblpath != "":
-        raise Exception("Blending global blendshapes from ml dataset caches not yet implemented")
-    if localblpath != "":
-        # get data
-        objs = os.listdir(localblpath)
-        n_meshes = len(objs)
-        localbl = np.empty((n_meshes, n_vertices_x3), dtype=np.float32)
 
-        # not using data.MeshData to speed things up as we only need the vertex positions
-        print("Collecting blendshapes...")
-        for i, obj in enumerate(objs):
-            if i % 50 == 0:
-                print(f"Blendshape {i}/{n_meshes}")
-            vertices = []
-            with open(os.path.join(localblpath, obj), 'r') as f:
-                # vertex positions x,y,z,x,...,z
-                for line in f:
-                    if line.startswith("v "):
-                        vertices.extend([float(x) for x in line.strip().split(" ")[1:]])
-            # per-vertex deltas
-            localbl[i] = np.subtract(np.asarray(vertices, dtype=np.float32), v_basemesh)
+    m1 = torch.eye(n_frames, dtype=torch.float32, device='cuda')
+    m2 = torch.eye(n_frames, dtype=torch.float32, device='cuda')
+    m3 = torch.zeros((n_vertices_x3, n_frames), dtype=torch.float32, device='cuda')
 
-        # shapes
-        m_3vb = torch.tensor(localbl.transpose(), dtype=torch.float32, device='cuda')
-        datasets['local'] = m_3vb
-
-        # mappings
-        m_bf_face = torch.zeros(n_meshes, n_frames, dtype=torch.float32, device='cuda', requires_grad=False)
-        maps['local'] = m_bf_face
-
-    return datasets, maps, torch.zeros(n_frames, dtype=torch.float32, device='cuda')
+    return m1, m2, m3, torch.zeros(n_frames, dtype=torch.float32, device='cuda')
 
 # -------------------------------------------------------------------------------------------------
 
@@ -200,7 +172,7 @@ def fitTake(max_iter, lr_base, lr_ramp, basemeshpath, localblpath, globalblpath,
 
     # blendshapes and mappings
     n_vertices_x3 = v_base.shape[0]
-    datasets, maps, v_f = setup_dataset(localblpath, globalblpath, n_frames, n_vertices_x3, basemesh.vertices)
+    m1, m2, m3, v_f = setup_dataset(n_frames, n_vertices_x3)
 
     # context and optimizer
     print("Setting up RasterizeGLContext and optimizer...")
@@ -208,7 +180,7 @@ def fitTake(max_iter, lr_base, lr_ramp, basemeshpath, localblpath, globalblpath,
 
     # ================================================================
     # UPDATE PARAMETERS HERE
-    optimizer = torch.optim.Adam([tex_opt, maps['local'], t_opt, rotvec_opt], lr=lr_base, weight_decay=10e-1)
+    optimizer = torch.optim.Adam([m1, m2, m3], lr=lr_base, weight_decay=10e-1)
     scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer, lr_lambda=lambda x: lr_ramp**(float(x)/float(max_iter)))
     # ================================================================
 
@@ -256,7 +228,7 @@ def fitTake(max_iter, lr_base, lr_ramp, basemeshpath, localblpath, globalblpath,
                 mvp = torch.matmul(proj, tr)
 
                 # get blended vertex positions according to eq.
-                vtx_pos = blend(v_base, maps, datasets, v_f)
+                vtx_pos = blend(v_base, m1, m2, m3, v_f)
                 # split [n_vertices * 3] to [n_vertices, 3] as a view of the original tensor
                 vtx_pos_split = torch.reshape(vtx_pos, (vtx_pos.shape[0] // 3, 3))
 
