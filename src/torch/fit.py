@@ -5,6 +5,7 @@ import json
 # 3rd party
 import numpy as np
 import torch
+from torch.nn.functional import conv2d
 import nvdiffrast.torch as dr
 from PIL import Image
 import roma as roma
@@ -263,20 +264,24 @@ def fitTake(max_iter, lr_base, lr_ramp, basemeshpath, localblpath, globalblpath,
                 # render
                 colour = render(glctx, mvp, vtx_pos_split, pos_idx, uv, uv_idx, tex_opt, resolution, enable_mip, max_mip_level)
 
-                # if we're optimizing pose, add blur for more tractable optimization landscape
-                # built-in gaussian not available for torch tensors since we can't use the right torch3d version
-                """if t_opt.requires_grad:
-                    blur = utils.GaussianBlur(kernel_size=11)
-                    ref_blur = blur(ref)
-                    colour_blur = blur(colour)"""
-
                 # Compute loss and train.
                 # TODO: add activation constraints (L1 sparsity)
                 """if t_opt.requires_grad:
                     loss = torch.mean((ref_blur - colour_blur*255) ** 2)  # L2 pixel loss, *255 to channels from opengl
                 else:
                     loss = torch.mean((ref - colour*255) ** 2)  # L2 pixel loss, *255 to channels from opengl"""
-                loss = torch.mean((ref - colour*255) ** 2)  # L2 pixel loss, *255 to channels from opengl
+
+                # blur before calculating pixel space loss using gaussian kernel of size 32
+                # more tractable optimization landscape
+                # built-in gaussian not available for torch tensors since we can't use the right torch3d version
+                ref_reshape = torch.reshape(ref, (1, ref.shape[2], ref.shape[0], ref.shape[1]))
+                colour_reshape = torch.reshape(colour, (1, colour.shape[2], colour.shape[0], colour.shape[1]))
+                gaussian_kernel = utils.gaussian_kernel(32)
+                kernel_reshape = torch.reshape(gaussian_kernel, (1, colour.shape[2], 32, 32))
+                ref_blur = conv2d(input=ref_reshape, weight=kernel_reshape, stride=1, padding='same')
+                colour_blur = conv2d(input=colour_reshape, weight=kernel_reshape, stride=1, padding='same')
+
+                loss = torch.mean((ref_blur - colour_blur*255) ** 2)  # L2 pixel loss, *255 to channels from opengl
                 optimizer.zero_grad()
                 loss.backward()
                 optimizer.step()
