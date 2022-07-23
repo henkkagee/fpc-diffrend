@@ -6,7 +6,7 @@ import fit
 
 def run():
     fit.fitTake(
-        max_iter=5000,
+        max_iter=3500,
         lr_base=10e-3,
         lr_ramp=0.1,
         basemeshpath=r"C:\Users\Henkka\Projects\invrend-fpc\data\basemesh.obj",
@@ -21,7 +21,7 @@ def run():
         texshape=(1024, 1024, 1),
         out_dir=r"C:\Users\Henkka\Projects\invrend-fpc\data\out_img\take0001",
         resolution=(1600, 1200),
-        mp4_interval=0,
+        mp4_interval=3,
         texpath=r"C:\Users\Henkka\Projects\invrend-fpc\data\ilkka_villi_anchor_greyscale_fix.png"
     )
 

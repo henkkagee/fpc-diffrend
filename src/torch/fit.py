@@ -208,7 +208,7 @@ def fitTake(max_iter, lr_base, lr_ramp, basemeshpath, localblpath, globalblpath,
 
     # ================================================================
     # UPDATE PARAMETERS HERE
-    optimizer = torch.optim.Adam([tex_opt, maps['local'], t_opt, rotvec_opt], lr=lr_base, weight_decay=10e-3)
+    optimizer = torch.optim.Adam([tex_opt, maps['local'], t_opt, rotvec_opt], lr=lr_base, weight_decay=10e-1)
     scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer, lr_lambda=lambda x: lr_ramp**(float(x)/float(max_iter)))
     # ================================================================
 
@@ -250,7 +250,7 @@ def fitTake(max_iter, lr_base, lr_ramp, basemeshpath, localblpath, globalblpath,
                 if it < 500:
                     rigid_trans = camera.rigid_grad(t_opt*0.1, roma.rotvec_to_rotmat(rotvec_opt*0.1))
                 else:
-                    rigid_trans = camera.rigid_grad(t_opt * 0.03, roma.rotvec_to_rotmat(rotvec_opt * 0.03))
+                    rigid_trans = camera.rigid_grad(t_opt * 0.05, roma.rotvec_to_rotmat(rotvec_opt * 0.05))
                 # print(f"t_opt: {t_opt} --- rotvec_opt: {rotvec_opt} --- rigid_trans: {rigid_trans}")
                 tr = torch.matmul(rigid_trans, t_mv)
                 mvp = torch.matmul(proj, tr)
@@ -296,9 +296,8 @@ def fitTake(max_iter, lr_base, lr_ramp, basemeshpath, localblpath, globalblpath,
                         maps['local'].requires_grad = True
                         t_opt.requires_grad = not t_opt.requires_grad
                         rotvec_opt.requires_grad = not rotvec_opt.requires_grad
-                    elif it >= 4000:
+                    elif it >= 2000:
                         tex_opt.requires_grad = True
-
                 # Show/save image.
                 display_image = (display_interval and (it % display_interval == 0)) or it == max_iter
                 save_mp4 = (mp4_interval and (it % mp4_interval == 0))
