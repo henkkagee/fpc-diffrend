@@ -49,9 +49,6 @@ def blend(v_base, maps, dataset, frames):
     :return: Blended mesh vertex positions of shape [3*v], (x,y,z,x,...)
     """
     if 'global' not in dataset:
-        # print(f"shapes:\nv_base[{v_base.shape}\ndataset['local][{dataset['local'].shape}]\nmaps['local][{maps['local'].shape}]\nframes[{frames.shape}]")
-        """bl_res = torch.matmul(dataset['local'], maps['local'])
-        mapped = torch.matmul(bl_res, frames)"""
         mapped = torch.matmul(maps['local'], frames)
         bl_res = torch.matmul(dataset['local'], mapped)
         vtx_pos = torch.add(v_base, bl_res)
@@ -87,7 +84,6 @@ def render(glctx, mtx, pos, pos_idx, uv, uv_idx, tex, resolution, enable_mip, ma
         colour = dr.texture(tex[None, ...], texc, filter_mode='linear')
 
     colour = dr.antialias(colour, rast_out, pos_clip, pos_idx)
-    # colour = colour * torch.clamp(rast_out[..., -1:], 0, 1)
     colour = torch.where(rast_out[..., 3:] > 0, colour, torch.tensor(45.0 / 255.0).cuda())
     return colour[0]
 
@@ -167,15 +163,15 @@ def fitTake(max_iter, lr_base, lr_ramp, basemeshpath, localblpath, globalblpath,
     :return:
     """
 
+    # miscellaneous setup
     if mp4_interval:
         writer = imageio.get_writer(f'{out_dir}/progress.mp4', mode='I', fps=30, codec='libx264', bitrate='16M')
     else:
         writer = None
-
     flip_opt_interval = 500
-
     cams = os.listdir(imdir)
     n_frames = assertNumFrames(cams, imdir)
+
     # calibrations
     path = r"C:\Users\Henkka\Projects\invrend-fpc\data\calibration\2021-07-01\DI_calibration.json"
     with open(calibpath) as json_file:
@@ -211,14 +207,16 @@ def fitTake(max_iter, lr_base, lr_ramp, basemeshpath, localblpath, globalblpath,
     # UPDATE PARAMETERS HERE
     optimizer = torch.optim.Adam([tex_opt, maps['local'], t_opt, rotvec_opt], lr=lr_base, weight_decay=10e-1)
     scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer, lr_lambda=lambda x: lr_ramp**(float(x)/float(max_iter)))
+    # local response norm for image contrast normalization, for grayscale (1) and rgb frames (3)
+    lrn1 = torch.nn.LocalResponseNorm(1)
+    lrn3 = torch.nn.LocalResponseNorm(3)
     # ================================================================
 
     # starting camera iteration
     for cam in cams:
         # get camera calibration
         if "pod2texture" not in cam:
-            continue
-        calib = calibs[cam.split("_")[1]]
+            continue        calib = calibs[cam.split("_")[1]]
         intr = np.asarray(calib['intrinsic'], dtype=np.float32)
         dist = np.asarray(calib['distortion'], dtype=np.float32)
         rot = np.asarray(calib['rotation'], dtype=np.float32)
@@ -227,9 +225,9 @@ def fitTake(max_iter, lr_base, lr_ramp, basemeshpath, localblpath, globalblpath,
         camdir = os.path.join(imdir, cam)
         frames = os.listdir(camdir)
         for i, frame in enumerate(frames):
+
             # reference image to render against
             img = np.array(Image.open(os.path.join(camdir, frame)))
-            # img = cv2.undistort(img, intr, dist)
             ref = torch.from_numpy(np.flip(img, 0).copy()).cuda()
             ref = ref.reshape((ref.shape[0], ref.shape[1], 1))
 
@@ -238,7 +236,6 @@ def fitTake(max_iter, lr_base, lr_ramp, basemeshpath, localblpath, globalblpath,
             v_f[framenum] = 1.0
 
             # modelview and projection
-            # TODO: how to incorporate camera distortion parameters in projection? in shaders?
             # lens distortion currently handled as preprocess in reference images
             projection = camera.intrinsic_to_projection(intr)
             proj = torch.from_numpy(projection).cuda()
@@ -252,7 +249,6 @@ def fitTake(max_iter, lr_base, lr_ramp, basemeshpath, localblpath, globalblpath,
                     rigid_trans = camera.rigid_grad(t_opt*0.1, roma.rotvec_to_rotmat(rotvec_opt*0.1))
                 else:
                     rigid_trans = camera.rigid_grad(t_opt * 0.05, roma.rotvec_to_rotmat(rotvec_opt * 0.05))
-                # print(f"t_opt: {t_opt} --- rotvec_opt: {rotvec_opt} --- rigid_trans: {rigid_trans}")
                 tr = torch.matmul(rigid_trans, t_mv)
                 mvp = torch.matmul(proj, tr)
 
@@ -264,18 +260,24 @@ def fitTake(max_iter, lr_base, lr_ramp, basemeshpath, localblpath, globalblpath,
                 # render
                 colour = render(glctx, mvp, vtx_pos_split, pos_idx, uv, uv_idx, tex_opt, resolution, enable_mip, max_mip_level)
 
-                # Compute loss and train.
+
+                """
+                =======================
+                Compute loss and train.
+                =======================
+                """
                 # TODO: add activation constraints (L1 sparsity)
-                """if t_opt.requires_grad:
-                    loss = torch.mean((ref_blur - colour_blur*255) ** 2)  # L2 pixel loss, *255 to channels from opengl
-                else:
-                    loss = torch.mean((ref - colour*255) ** 2)  # L2 pixel loss, *255 to channels from opengl"""
+
+                # local contrast (response) normalization over channels to account for
+                # lighting changes between reference and rendered image
+                ref_norm = lrn1(ref)
+                colour_norm = lrn1(colour)
 
                 # blur before calculating pixel space loss using gaussian kernel of size 32
                 # more tractable optimization landscape
                 # built-in gaussian not available for torch tensors since we can't use the right torch3d version
-                ref_reshape = torch.reshape(ref, (1, ref.shape[2], ref.shape[0], ref.shape[1]))
-                colour_reshape = torch.reshape(colour, (1, colour.shape[2], colour.shape[0], colour.shape[1]))
+                ref_reshape = torch.reshape(ref_norm, (1, ref_norm.shape[2], ref_norm.shape[0], ref_norm.shape[1]))
+                colour_reshape = torch.reshape(colour_norm, (1, colour_norm.shape[2], colour_norm.shape[0], colour_norm.shape[1]))
                 gaussian_kernel = utils.gaussian_kernel(32)
                 kernel_reshape = torch.reshape(gaussian_kernel, (1, colour.shape[2], 32, 32))
                 ref_blur = conv2d(input=ref_reshape, weight=kernel_reshape, stride=1, padding='same')
@@ -303,6 +305,7 @@ def fitTake(max_iter, lr_base, lr_ramp, basemeshpath, localblpath, globalblpath,
                         rotvec_opt.requires_grad = not rotvec_opt.requires_grad
                     elif it >= 2000:
                         tex_opt.requires_grad = True
+
                 # Show/save image.
                 display_image = (display_interval and (it % display_interval == 0)) or it == max_iter
                 save_mp4 = (mp4_interval and (it % mp4_interval == 0))
