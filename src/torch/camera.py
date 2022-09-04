@@ -5,7 +5,6 @@ import torch
 
 # -------------------------------------------------------------------------------------------------
 
-
 def transform_clip(mvp, pos):
     """
     Transform vertex coordinates to clip space.

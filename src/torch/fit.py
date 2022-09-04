@@ -16,6 +16,8 @@ import src.torch.data as data
 import src.torch.utils as utils
 import src.torch.camera as camera
 
+# TODO: SWITCH BACK TO ROMA QUATERNIONS
+
 # -------------------------------------------------------------------------------------------------
 
 
@@ -128,7 +130,7 @@ def setup_dataset(localblpath, globalblpath, n_frames, n_vertices_x3, v_basemesh
         datasets['local'] = m_3vb
 
         # mappings
-        m_bf_face = torch.zeros(n_meshes, n_frames, dtype=torch.float32, device='cuda', requires_grad=False)
+        m_bf_face = torch.zeros(n_meshes, n_frames, dtype=torch.float32, device='cuda', requires_grad=True)
         maps['local'] = m_bf_face
 
     return datasets, maps, torch.zeros(n_frames, dtype=torch.float32, device='cuda')
@@ -136,7 +138,7 @@ def setup_dataset(localblpath, globalblpath, n_frames, n_vertices_x3, v_basemesh
 # -------------------------------------------------------------------------------------------------
 
 
-def fitTake(max_iter, lr_base, lr_ramp, basemeshpath, localblpath, globalblpath, display_interval,
+def fitTake(max_iter, lr_base, lr_ramp, pose_lr, basemeshpath, localblpath, globalblpath, display_interval,
             log_interval, imdir, calibpath, enable_mip, max_mip_level, texshape, out_dir, resolution,
             mp4_interval, texpath=""):
     """
@@ -146,6 +148,7 @@ def fitTake(max_iter, lr_base, lr_ramp, basemeshpath, localblpath, globalblpath,
     :param lr_base: Base learning rate
     :param lr_ramp: Learning rate ramp-down for use with torch.optim.lr_scheduler:
                     lr_base * lr_ramp ^ (epoch/max_iter)
+    :param pose_lr: Learning rate for translation and rotation optimization
     :param basemeshpath: Path to the base mesh
     :param localblpath: Path to directory of local blendshapes
     :param globalblpath: Path to directory of global blendshapes
@@ -190,10 +193,10 @@ def fitTake(max_iter, lr_base, lr_ramp, basemeshpath, localblpath, globalblpath,
         tex = np.flip(tex, 0)
     else:
         tex = np.random.uniform(low=0.0, high=1.0, size=texshape)
-    tex_opt = torch.tensor(tex.copy(), dtype=torch.float32, device='cuda', requires_grad=False)
+    tex_opt = torch.tensor(tex.copy(), dtype=torch.float32, device='cuda', requires_grad=True)
     t_opt = torch.tensor([0.0, 0.0, 0.0], dtype=torch.float32, device='cuda', requires_grad=True)
-    # we can't init the rotation to exactly 0.0 as the gradients are then not stable
-    rotvec_opt = torch.tensor([0.01, 0.01, 0.01], dtype=torch.float32, device='cuda', requires_grad=True)
+    # initial unit quaternion for rotation optimization
+    q_opt = torch.tensor([0.0, 0.0, 0.0, 1.0], dtype=torch.float32, device='cuda', requires_grad=True)
 
     # blendshapes and mappings
     n_vertices_x3 = v_base.shape[0]
@@ -201,22 +204,23 @@ def fitTake(max_iter, lr_base, lr_ramp, basemeshpath, localblpath, globalblpath,
 
     # context and optimizer
     print("Setting up RasterizeGLContext and optimizer...")
-    glctx = dr.RasterizeGLContext()
+    glctx = dr.RasterizeGLContext(device='cuda')
 
     # ================================================================
     # UPDATE PARAMETERS HERE
-    optimizer = torch.optim.Adam([tex_opt, maps['local'], t_opt, rotvec_opt], lr=lr_base, weight_decay=10e-1)
+    optimizer = torch.optim.Adam([tex_opt, maps['local'], t_opt, q_opt], lr=lr_base, weight_decay=10e-1)
     scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer, lr_lambda=lambda x: lr_ramp**(float(x)/float(max_iter)))
-    # local response norm for image contrast normalization, for grayscale (1) and rgb frames (3)
-    lrn1 = torch.nn.LocalResponseNorm(1)
-    lrn3 = torch.nn.LocalResponseNorm(3)
+    # local response norm for image contrast normalization
+    lrn = torch.nn.LocalResponseNorm(2)
+    # lrn3 = torch.nn.LocalResponseNorm(3)
     # ================================================================
 
     # starting camera iteration
     for cam in cams:
         # get camera calibration
         if "pod2texture" not in cam:
-            continue        calib = calibs[cam.split("_")[1]]
+            continue
+        calib = calibs[cam.split("_")[1]]
         intr = np.asarray(calib['intrinsic'], dtype=np.float32)
         dist = np.asarray(calib['distortion'], dtype=np.float32)
         rot = np.asarray(calib['rotation'], dtype=np.float32)
@@ -228,7 +232,7 @@ def fitTake(max_iter, lr_base, lr_ramp, basemeshpath, localblpath, globalblpath,
 
             # reference image to render against
             img = np.array(Image.open(os.path.join(camdir, frame)))
-            ref = torch.from_numpy(np.flip(img, 0).copy()).cuda()
+            ref = torch.tensor(np.flip(img, 0).copy(), dtype=torch.float32, device='cuda')
             ref = ref.reshape((ref.shape[0], ref.shape[1], 1))
 
             # set one-hot frame index
@@ -245,12 +249,14 @@ def fitTake(max_iter, lr_base, lr_ramp, basemeshpath, localblpath, globalblpath,
 
             # render
             for it in range(max_iter + 1):
+
                 if it < 500:
-                    rigid_trans = camera.rigid_grad(t_opt*0.1, roma.rotvec_to_rotmat(rotvec_opt*0.1))
+                    rigid_trans = camera.rigid_grad(t_opt * 0.15, roma.unitquat_to_rotmat(q_opt))
                 else:
-                    rigid_trans = camera.rigid_grad(t_opt * 0.05, roma.rotvec_to_rotmat(rotvec_opt * 0.05))
+                    rigid_trans = camera.rigid_grad(t_opt * 0.03, roma.unitquat_to_rotmat(q_opt))
                 tr = torch.matmul(rigid_trans, t_mv)
                 mvp = torch.matmul(proj, tr)
+
 
                 # get blended vertex positions according to eq.
                 vtx_pos = blend(v_base, maps, datasets, v_f)
@@ -270,18 +276,20 @@ def fitTake(max_iter, lr_base, lr_ramp, basemeshpath, localblpath, globalblpath,
 
                 # local contrast (response) normalization over channels to account for
                 # lighting changes between reference and rendered image
-                ref_norm = lrn1(ref)
-                colour_norm = lrn1(colour)
+                # torch local response norm needs channel dimension to be in dim 1
+                ref_norm = lrn(ref.permute(0, 2, 1))
+                colour_norm = lrn(colour.permute(0, 2, 1))
+                # permute back original shape from lrn shape requirements (need to have channel back in dim 2)
+                ref_norm = ref_norm.permute(0, 2, 1)
+                colour_norm = colour_norm.permute(0, 2, 1)
 
                 # blur before calculating pixel space loss using gaussian kernel of size 32
                 # more tractable optimization landscape
                 # built-in gaussian not available for torch tensors since we can't use the right torch3d version
-                ref_reshape = torch.reshape(ref_norm, (1, ref_norm.shape[2], ref_norm.shape[0], ref_norm.shape[1]))
-                colour_reshape = torch.reshape(colour_norm, (1, colour_norm.shape[2], colour_norm.shape[0], colour_norm.shape[1]))
-                gaussian_kernel = utils.gaussian_kernel(32)
-                kernel_reshape = torch.reshape(gaussian_kernel, (1, colour.shape[2], 32, 32))
-                ref_blur = conv2d(input=ref_reshape, weight=kernel_reshape, stride=1, padding='same')
-                colour_blur = conv2d(input=colour_reshape, weight=kernel_reshape, stride=1, padding='same')
+                smoothing = utils.GaussianSmoothing(1, 32, 1)
+                smoothing = smoothing.to('cuda')
+                ref_blur = smoothing(torch.reshape(ref_norm, (1, ref_norm.shape[2], ref_norm.shape[0], ref_norm.shape[1])))
+                colour_blur = smoothing(torch.reshape(colour_norm, (1, colour_norm.shape[2], colour_norm.shape[0], colour_norm.shape[1])))
 
                 loss = torch.mean((ref_blur - colour_blur*255) ** 2)  # L2 pixel loss, *255 to channels from opengl
                 optimizer.zero_grad()
@@ -289,30 +297,34 @@ def fitTake(max_iter, lr_base, lr_ramp, basemeshpath, localblpath, globalblpath,
                 optimizer.step()
                 scheduler.step()
 
+                # scale and normalize quaternion
+                with torch.no_grad():
+                    q_opt /= torch.sum(q_opt**2) ** 0.5
+
                 # Print loss logging
                 log = (log_interval and (it % log_interval == 0))
                 if log:
                     print(f"It[{it}] - Loss: {loss} - pos_vtx[1]: {vtx_pos_split[0]} - avg_act: {torch.mean(maps['local'][framenum])}"
                           f" - max_act: {torch.max(maps['local'][framenum])}")
 
-                # change the target of optimization
+                """# change the target of optimization
                 if it % flip_opt_interval == 0:
                     # tex_opt.requires_grad = not tex_opt.requires_grad
                     if it == 1000:
                         print("Switched to optimizing blendshape activations!")
                         maps['local'].requires_grad = True
                         t_opt.requires_grad = not t_opt.requires_grad
-                        rotvec_opt.requires_grad = not rotvec_opt.requires_grad
+                        q_opt.requires_grad = not q_opt.requires_grad
                     elif it >= 2000:
-                        tex_opt.requires_grad = True
+                        tex_opt.requires_grad = True"""
 
                 # Show/save image.
                 display_image = (display_interval and (it % display_interval == 0)) or it == max_iter
                 save_mp4 = (mp4_interval and (it % mp4_interval == 0))
                 if display_image or save_mp4:
-                    img_ref = ref.cpu().numpy()
+                    img_ref = torch.reshape(ref_blur, (ref_blur.shape[2], ref_blur.shape[3], ref_blur.shape[1])).cpu().numpy()
                     img_ref = np.flip(np.array(img_ref.copy(), dtype=np.float32) / 255, 0)
-                    img_col = np.flip(colour.cpu().detach().numpy(), 0)
+                    img_col = np.flip(torch.reshape(colour_blur, (colour_blur.shape[2], colour_blur.shape[3], colour_blur.shape[1])).cpu().detach().numpy(), 0)
                     result_image = utils.make_img(np.stack([img_ref, img_col]))
                     if display_image:
                         utils.display_image(result_image)
