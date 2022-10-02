@@ -110,6 +110,7 @@ def translate(x, y, z):
 
 # -------------------------------------------------------------------------------------------------
 
+
 def translate_tensor(vec):
     mat = torch.zeros((4,4), dtype=torch.float32, device='cuda')
     mat[(0, 1, 2, 3), (0, 1, 2, 3)] = torch.ones(4, dtype=torch.float32, device='cuda')
@@ -119,6 +120,7 @@ def translate_tensor(vec):
     return mat
 
 # -------------------------------------------------------------------------------------------------
+
 
 def rigid_grad(tvec, rotmat):
     rt = torch.cat((rotmat, torch.reshape(tvec, (3, 1))), 1)

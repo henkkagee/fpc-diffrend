@@ -1,6 +1,5 @@
 import os
 import math
-import numbers
 
 from PIL import Image
 import numpy as np
