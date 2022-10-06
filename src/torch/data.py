@@ -36,3 +36,7 @@ class MeshData:
         self.uv = np.asarray(uv, dtype=np.float32)
         self.faces = np.asarray(faces, dtype=np.int32)
         self.fuv = np.asarray(fuv, dtype=np.int32)
+
+    def getNeighbouringVertices(self):
+
+# -------------------------------------------------------------------------------------------------

@@ -256,8 +256,8 @@ def fitTake(max_iter, lr_base, lr_ramp, pose_lr, basemeshpath, localblpath, glob
         camdir = os.path.join(imdir, cam)
         frames = os.listdir(camdir)
         for i, frame in enumerate(frames):
-            # optimizer = torch.optim.Adam([maps['local'], t_opt, q_opt], lr=lr_base, weight_decay=10e-1)
-            optimizer = torch.optim.Adam([tex_opt], lr=lr_base, weight_decay=10e-1)
+            optimizer = torch.optim.Adam([maps['local'], t_opt, q_opt], lr=lr_base, weight_decay=10e-1)
+            # optimizer = torch.optim.Adam([tex_opt], lr=lr_base, weight_decay=10e-1)
             scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer, lr_lambda=lambda x: lr_ramp ** (
                     float(x) / float(max_iter)))
 

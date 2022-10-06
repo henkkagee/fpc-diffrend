@@ -6,7 +6,7 @@ import fit
 
 def run():
     fit.fitTake(
-        max_iter=100,
+        max_iter=1000,
         lr_base=10e-4,
         lr_ramp=0.1,
         pose_lr=0.2,
@@ -15,14 +15,14 @@ def run():
         globalblpath="",
         display_interval=10,
         log_interval=10,
-        imdir=r"C:\Users\Henkka\Projects\invrend-fpc\data\reference\rom\take0001\20191106_ilkvil_ML_ROM_take0001_pod2colour_range01",
+        imdir=r"C:\Users\Henkka\Projects\invrend-fpc\data\reference\rom\single",
         calibpath=r"C:\Users\Henkka\Projects\invrend-fpc\data\calibration\combined\calibration.json",
         enable_mip=False,
         max_mip_level=6,
         texshape=(1024, 1024, 1),
-        out_dir=r"C:\Users\Henkka\Projects\invrend-fpc\data\out_img\take0001",
+        out_dir=r"C:\Users\Henkka\Projects\invrend-fpc\data\out_img\singlerom",
         resolution=(1600, 1200),
-        mp4_interval=98,
+        mp4_interval=998,
         texpath=r"C:\Users\Henkka\Projects\invrend-fpc\data\ilkka_villi_anchor_greyscale_fix.png"
     )
 
