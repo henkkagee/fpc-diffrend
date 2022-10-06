@@ -6,7 +6,7 @@ import fit
 
 def run():
     fit.fitTake(
-        max_iter=3500,
+        max_iter=600,
         lr_base=10e-3,
         lr_ramp=0.1,
         basemeshpath=r"C:\Users\Henkka\Projects\invrend-fpc\data\basemesh.obj",

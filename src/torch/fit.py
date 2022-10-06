@@ -102,9 +102,9 @@ def setup_dataset(n_frames, n_vertices_x3):
     :return:
     """
 
-    m1 = torch.eye(n_frames, dtype=torch.float32, device='cuda')
-    m2 = torch.eye(n_frames, dtype=torch.float32, device='cuda')
-    m3 = torch.zeros((n_vertices_x3, n_frames), dtype=torch.float32, device='cuda')
+    m1 = torch.eye(n_frames, dtype=torch.float32, device='cuda', requires_grad=True)
+    m2 = torch.eye(n_frames, dtype=torch.float32, device='cuda', requires_grad=True)
+    m3 = torch.zeros((n_vertices_x3, n_frames), dtype=torch.float32, device='cuda', requires_grad=True)
 
     return m1, m2, m3, torch.zeros(n_frames, dtype=torch.float32, device='cuda')
 
@@ -165,7 +165,7 @@ def fitTake(max_iter, lr_base, lr_ramp, basemeshpath, localblpath, globalblpath,
         tex = np.flip(tex, 0)
     else:
         tex = np.random.uniform(low=0.0, high=1.0, size=texshape)
-    tex_opt = torch.tensor(tex.copy(), dtype=torch.float32, device='cuda', requires_grad=False)
+    tex_opt = torch.tensor(tex.copy(), dtype=torch.float32, device='cuda', requires_grad=True)
     t_opt = torch.tensor([0.0, 0.0, 0.0], dtype=torch.float32, device='cuda', requires_grad=True)
     # we can't init the rotation to exactly 0.0 as the gradients are then not stable
     rotvec_opt = torch.tensor([0.01, 0.01, 0.01], dtype=torch.float32, device='cuda', requires_grad=True)
@@ -180,7 +180,7 @@ def fitTake(max_iter, lr_base, lr_ramp, basemeshpath, localblpath, globalblpath,
 
     # ================================================================
     # UPDATE PARAMETERS HERE
-    optimizer = torch.optim.Adam([m1, m2, m3], lr=lr_base, weight_decay=10e-1)
+    optimizer = torch.optim.Adam([m1, m2, m3, tex_opt], lr=lr_base, weight_decay=10e-1)
     scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer, lr_lambda=lambda x: lr_ramp**(float(x)/float(max_iter)))
     # ================================================================
 
@@ -257,19 +257,8 @@ def fitTake(max_iter, lr_base, lr_ramp, basemeshpath, localblpath, globalblpath,
                 # Print loss logging
                 log = (log_interval and (it % log_interval == 0))
                 if log:
-                    print(f"It[{it}] - Loss: {loss} - pos_vtx[1]: {vtx_pos_split[0]} - avg_act: {torch.mean(maps['local'][framenum])}"
-                          f" - max_act: {torch.max(maps['local'][framenum])}")
+                    print(f"It[{it}] - Loss: {loss}")
 
-                # change the target of optimization
-                if it % flip_opt_interval == 0:
-                    # tex_opt.requires_grad = not tex_opt.requires_grad
-                    if it == 1000:
-                        print("Switched to optimizing blendshape activations!")
-                        maps['local'].requires_grad = True
-                        t_opt.requires_grad = not t_opt.requires_grad
-                        rotvec_opt.requires_grad = not rotvec_opt.requires_grad
-                    elif it >= 2000:
-                        tex_opt.requires_grad = True
                 # Show/save image.
                 display_image = (display_interval and (it % display_interval == 0)) or it == max_iter
                 save_mp4 = (mp4_interval and (it % mp4_interval == 0))
