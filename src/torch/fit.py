@@ -121,8 +121,6 @@ def get_vertex_differentials(vtx_pos, vtx_neigh, n_vertices):
     """
     diffs = torch.zeros(n_vertices, dtype=torch.float32, device='cuda')
     for idx in range(n_vertices):
-        if not idx % random.randint(4, 12):
-            continue
         # one-vertex differential
         diffs[idx] = vtx_pos[idx] - torch.mean(data.get_vertex_coordinates(vtx_pos, vtx_neigh[idx]))
     return diffs
@@ -138,10 +136,8 @@ def laplacian_regularization(base_vtx_differential, vtx_pos, vertex_neighbours, 
     :param vertex_neighbours: dict of vertex neighbours by vertex number
     :return: loss
     """
-    print("Computing laplacian...")
     vtx_pos_differential = get_vertex_differentials(vtx_pos, vertex_neighbours, n_vertices)
     loss = torch.mean((base_vtx_differential - vtx_pos_differential)**2)
-    print("Done.")
     return loss
 
 # -------------------------------------------------------------------------------------------------
@@ -183,7 +179,7 @@ def fitTake(max_iter, lr_base, lr_ramp, basemeshpath, localblpath, globalblpath,
 
         cams = os.listdir(imdir)
         n_frames = assertNumFrames(cams, imdir)
-        n_frames = 5
+        n_frames = 1
         # calibrations
         path = r"C:\Users\Henkka\Projects\invrend-fpc\data\calibration\2021-07-01\DI_calibration.json"
         with open(calibpath) as json_file:
@@ -243,7 +239,7 @@ def fitTake(max_iter, lr_base, lr_ramp, basemeshpath, localblpath, globalblpath,
                 optimizer = torch.optim.Adam([{"params": m1},
                                               {"params": m2},
                                               {"params": m3},
-                                              {"params": tex_opt, 'lr': 10e-6}], lr=lr_base)
+                                              {"params": tex_opt, 'lr': 10e-5}], lr=lr_base)
                 scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer,
                                                               lr_lambda=lambda x: lr_ramp ** (float(x) / float(max_iter)))
 
@@ -294,8 +290,8 @@ def fitTake(max_iter, lr_base, lr_ramp, basemeshpath, localblpath, globalblpath,
                     """
 
                     loss_pixel = torch.mean((ref - colour*255) ** 2)  # L2 pixel loss, *255 to channels from opengl
-                    # loss_laplacian = laplacian_regularization(base_vtx_differential, vtx_pos, vertex_neighbours, n_vertices)
-                    loss = loss_pixel#  + 3*loss_laplacian
+                    loss_laplacian = laplacian_regularization(base_vtx_differential, vtx_pos, vertex_neighbours, n_vertices)
+                    loss = loss_pixel + 3*loss_laplacian
                     optimizer.zero_grad()
                     loss.backward()
                     optimizer.step()
