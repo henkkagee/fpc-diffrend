@@ -110,6 +110,41 @@ def setup_dataset(n_frames, n_vertices_x3):
 
 # -------------------------------------------------------------------------------------------------
 
+def get_vertex_differentials(vtx_pos, vtx_neigh, n_vertices):
+    """
+    Compute and return tensor of one-ring neighbour vertex differentials from tensor of vertex positions.
+
+    :param vtx_pos: tensor of vertex positions of shape (n_vertices*3) (x,y,z,x,...)
+    :param vtx_pos: dict of one-ring vertex neighbours by index
+    :return: tensor of vertex differentials
+    """
+    diffs = torch.zeros(n_vertices, dtype=torch.float32, device='cuda')
+    for idx in range(n_vertices):
+        if not idx % 5:
+            continue
+        # one-vertex differential
+        diffs[idx] = vtx_pos[idx] - torch.mean(data.get_vertex_coordinates(vtx_pos, vtx_neigh[idx]))
+    return diffs
+
+# -------------------------------------------------------------------------------------------------
+
+def laplacian_regularization(base_vtx_differential, vtx_pos, vertex_neighbours, n_vertices):
+    """
+    Compute the mesh laplacian regularization term for penalizing local curvature changes.
+
+    :param base_vtx_differential: Uniformly-weighted vertex differentials for the base mesh
+    :param vtx_pos: tensor of shape (n_vertices*3) (x,y,z,x,...)
+    :param vertex_neighbours: dict of vertex neighbours by vertex number
+    :return: loss
+    """
+    print("Computing laplacian...")
+    vtx_pos_differential = get_vertex_differentials(vtx_pos, vertex_neighbours, n_vertices)
+    loss = torch.mean((base_vtx_differential - vtx_pos_differential)**2)
+    print("Done.")
+    return loss
+
+# -------------------------------------------------------------------------------------------------
+
 
 def fitTake(max_iter, lr_base, lr_ramp, basemeshpath, localblpath, globalblpath, display_interval,
             log_interval, imdir, calibpath, enable_mip, max_mip_level, texshape, out_dir, resolution,
@@ -156,9 +191,14 @@ def fitTake(max_iter, lr_base, lr_ramp, basemeshpath, localblpath, globalblpath,
     # basemesh
     basemesh = data.MeshData(basemeshpath)
     v_base = torch.tensor(basemesh.vertices, dtype=torch.float32, device='cuda')
+    n_vertices_x3 = v_base.shape[0]
+    n_vertices = n_vertices_x3 // 3
     pos_idx = torch.tensor(basemesh.faces, dtype=torch.int32, device='cuda')
     uv = torch.tensor(basemesh.uv, dtype=torch.float32, device='cuda')
     uv_idx = torch.tensor(basemesh.fuv, dtype=torch.int32, device='cuda')
+    vertex_neighbours = torch.tensor(data.vertex_neighbours(basemesh.faces, n_vertices), dtype=torch.int32, device='cuda')
+    base_vtx_differential = get_vertex_differentials(v_base, vertex_neighbours, n_vertices)
+
     if texpath:
         tex = np.array(Image.open(texpath))/255.0
         tex = tex[..., np.newaxis]
@@ -171,24 +211,17 @@ def fitTake(max_iter, lr_base, lr_ramp, basemeshpath, localblpath, globalblpath,
     rotvec_opt = torch.tensor([0.01, 0.01, 0.01], dtype=torch.float32, device='cuda', requires_grad=True)
 
     # blendshapes and mappings
-    n_vertices_x3 = v_base.shape[0]
     m1, m2, m3, v_f = setup_dataset(n_frames, n_vertices_x3)
 
     # context and optimizer
     print("Setting up RasterizeGLContext and optimizer...")
     glctx = dr.RasterizeGLContext()
-
-    # ================================================================
-    # UPDATE PARAMETERS HERE
-    optimizer = torch.optim.Adam([m1, m2, m3, tex_opt], lr=lr_base, weight_decay=10e-1)
-    scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer, lr_lambda=lambda x: lr_ramp**(float(x)/float(max_iter)))
-    # ================================================================
+    # local response norm for image contrast normalization
+    lrn = torch.nn.LocalResponseNorm(2)
 
     # starting camera iteration
     for cam in cams:
         # get camera calibration
-        if "pod2texture" not in cam:
-            continue
         calib = calibs[cam.split("_")[1]]
         intr = np.asarray(calib['intrinsic'], dtype=np.float32)
         dist = np.asarray(calib['distortion'], dtype=np.float32)
@@ -198,18 +231,32 @@ def fitTake(max_iter, lr_base, lr_ramp, basemeshpath, localblpath, globalblpath,
         camdir = os.path.join(imdir, cam)
         frames = os.listdir(camdir)
         for i, frame in enumerate(frames):
+
+            # ================================================================
+            # UPDATE PARAMETERS HERE
+            optimizer = torch.optim.Adam([m1, m2, m3, tex_opt], lr=lr_base, weight_decay=10e-1)
+            scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer,
+                                                          lr_lambda=lambda x: lr_ramp ** (float(x) / float(max_iter)))
+            # ================================================================
+
             # reference image to render against
             img = np.array(Image.open(os.path.join(camdir, frame)))
             # img = cv2.undistort(img, intr, dist)
             ref = torch.from_numpy(np.flip(img, 0).copy()).cuda()
             ref = ref.reshape((ref.shape[0], ref.shape[1], 1))
 
+            # filters
+            """ref_norm = lrn(ref.permute(0, 2, 1))
+            ref_norm = ref_norm.permute(0, 2, 1)
+            smoothing = utils.GaussianSmoothing(1, 32, 1)
+            smoothing = smoothing.to('cuda')
+            ref_blur = smoothing(torch.reshape(ref_norm, (1, ref_norm.shape[2], ref_norm.shape[0], ref_norm.shape[1])))"""
+
             # set one-hot frame index
             framenum = int(os.path.splitext(frame)[0].split("_")[-1])
             v_f[framenum] = 1.0
 
             # modelview and projection
-            # TODO: how to incorporate camera distortion parameters in projection? in shaders?
             # lens distortion currently handled as preprocess in reference images
             projection = camera.intrinsic_to_projection(intr)
             proj = torch.from_numpy(projection).cuda()
@@ -223,7 +270,6 @@ def fitTake(max_iter, lr_base, lr_ramp, basemeshpath, localblpath, globalblpath,
                     rigid_trans = camera.rigid_grad(t_opt*0.1, roma.rotvec_to_rotmat(rotvec_opt*0.1))
                 else:
                     rigid_trans = camera.rigid_grad(t_opt * 0.05, roma.rotvec_to_rotmat(rotvec_opt * 0.05))
-                # print(f"t_opt: {t_opt} --- rotvec_opt: {rotvec_opt} --- rigid_trans: {rigid_trans}")
                 tr = torch.matmul(rigid_trans, t_mv)
                 mvp = torch.matmul(proj, tr)
 
@@ -235,20 +281,15 @@ def fitTake(max_iter, lr_base, lr_ramp, basemeshpath, localblpath, globalblpath,
                 # render
                 colour = render(glctx, mvp, vtx_pos_split, pos_idx, uv, uv_idx, tex_opt, resolution, enable_mip, max_mip_level)
 
-                # if we're optimizing pose, add blur for more tractable optimization landscape
-                # built-in gaussian not available for torch tensors since we can't use the right torch3d version
-                """if t_opt.requires_grad:
-                    blur = utils.GaussianBlur(kernel_size=11)
-                    ref_blur = blur(ref)
-                    colour_blur = blur(colour)"""
+                """
+                =======================
+                Compute loss and train.
+                =======================
+                """
 
-                # Compute loss and train.
-                # TODO: add activation constraints (L1 sparsity)
-                """if t_opt.requires_grad:
-                    loss = torch.mean((ref_blur - colour_blur*255) ** 2)  # L2 pixel loss, *255 to channels from opengl
-                else:
-                    loss = torch.mean((ref - colour*255) ** 2)  # L2 pixel loss, *255 to channels from opengl"""
-                loss = torch.mean((ref - colour*255) ** 2)  # L2 pixel loss, *255 to channels from opengl
+                loss_pixel = torch.mean((ref - colour*255) ** 2)  # L2 pixel loss, *255 to channels from opengl
+                #loss_laplacian = laplacian_regularization(base_vtx_differential, vtx_pos, vertex_neighbours, n_vertices)
+                loss = loss_pixel# + 3*loss_laplacian
                 optimizer.zero_grad()
                 loss.backward()
                 optimizer.step()

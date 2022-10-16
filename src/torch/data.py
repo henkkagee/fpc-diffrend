@@ -1,4 +1,5 @@
 import numpy as np
+import torch
 
 # -------------------------------------------------------------
 
@@ -39,27 +40,48 @@ class MeshData:
 
 # -------------------------------------------------------------------------------------------------
 
-def vert_neighbours(faces):
+
+def vertex_neighbours(faces, n_vertices):
     """
     Get vertex neighbours from a triangular mesh (for computing the mesh laplacian regularization term)
 
     :param faces: MeshData.faces list of int triplets (vertices) defining triangles in a mesh
-    :return vertdict: dict vertex neighbours by vertex number
+    :return vertlist: 2-dimensional list of vertex neighbours by vertex number (0, 1, ..., n_vertices-1)
     """
+    print("Computing vertex neighbours...")
+    # a nested tensor would be nice but that's only available in an old, incompatible dev release
+    vertlist = [[] for i in range(n_vertices)]
 
-    vertdict = {}
-    for face in faces:
-        if not face[0] in vertdict:
-            vertdict[face[0]] = []
-        if not face[1] in vertdict:
-            vertdict[face[1]] = []
-        if not face[2] in vertdict:
-            vertdict[face[2]] = []
-        vertdict[face[0]].extend([face[1], face[2]])
-        vertdict[face[1]].extend([face[0], face[2]])
-        vertdict[face[2]].extend([face[0], face[1]])
+    for i, face in enumerate(faces):
+        vertlist[face[0]].extend([face[1], face[2]])
+        vertlist[face[1]].extend([face[0], face[2]])
+        vertlist[face[2]].extend([face[0], face[1]])
 
-    for vertex, neighs in vertdict.items():
-        vertdict[vertex] = list(set(neighs))
+    # remove duplicates and pad to length 8 (max number of possible neighbours)
+    # pytorch tensors do not support variable-sized column dimensions
+    ll = len(vertlist)
+    for i, v in enumerate(vertlist):
+        vertlist[i] = list(set(v))
+        vertlist[i] += [-1] * (8 - len(vertlist[i]))
 
-    return vertdict
+    print("Done.")
+    return vertlist
+
+# -------------------------------------------------------------------------------------------------
+
+
+def get_vertex_coordinates(vtx_pos, idxs):
+    """
+    Get tensor of vertex coordinates by vertex index. Vertex neighbour tensors padded with -1
+    to avoid variable-sized columns.
+
+    :param vtx_pos: Tensor of shape (n_vertices*3) of vertex coordinates
+    :param idxs: List of vertex indices for which vertices to get
+    :return:
+    """
+    size = 4
+    tensor = torch.zeros(size, dtype=torch.float32, device='cuda')
+    # atm I don't think there's any other way to do this... this is slow and not nice
+    for i in range(size):
+        tensor[i] = vtx_pos[idxs[i]]
+    return tensor
