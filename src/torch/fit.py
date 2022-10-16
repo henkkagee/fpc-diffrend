@@ -233,8 +233,6 @@ def fitTake(max_iter, lr_base, lr_ramp, basemeshpath, localblpath, globalblpath,
             camdir = os.path.join(imdir, cam)
             frames = os.listdir(camdir)
             for i, frame in enumerate(frames):
-                if i >= n_frames-1:
-                    break
 
                 # set one-hot frame index
                 framenum = int(os.path.splitext(frame)[0].split("_")[-1])
@@ -242,9 +240,13 @@ def fitTake(max_iter, lr_base, lr_ramp, basemeshpath, localblpath, globalblpath,
 
                 # ================================================================
                 # UPDATE PARAMETERS HERE
-                optimizer = torch.optim.Adam([m1, m2, m3], lr=lr_base, weight_decay=10e-1)
+                optimizer = torch.optim.Adam([{"params": m1},
+                                              {"params": m2},
+                                              {"params": m3},
+                                              {"params": tex_opt, 'lr': 10e-6}], lr=lr_base)
                 scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer,
                                                               lr_lambda=lambda x: lr_ramp ** (float(x) / float(max_iter)))
+
                 # ================================================================
 
                 # reference image to render against
@@ -292,8 +294,8 @@ def fitTake(max_iter, lr_base, lr_ramp, basemeshpath, localblpath, globalblpath,
                     """
 
                     loss_pixel = torch.mean((ref - colour*255) ** 2)  # L2 pixel loss, *255 to channels from opengl
-                    loss_laplacian = laplacian_regularization(base_vtx_differential, vtx_pos, vertex_neighbours, n_vertices)
-                    loss = loss_pixel + 3*loss_laplacian
+                    # loss_laplacian = laplacian_regularization(base_vtx_differential, vtx_pos, vertex_neighbours, n_vertices)
+                    loss = loss_pixel#  + 3*loss_laplacian
                     optimizer.zero_grad()
                     loss.backward()
                     optimizer.step()
