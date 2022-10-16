@@ -1,6 +1,7 @@
 # builtin
 import os
 import json
+import random
 
 # 3rd party
 import numpy as np
@@ -120,7 +121,7 @@ def get_vertex_differentials(vtx_pos, vtx_neigh, n_vertices):
     """
     diffs = torch.zeros(n_vertices, dtype=torch.float32, device='cuda')
     for idx in range(n_vertices):
-        if not idx % 5:
+        if not idx % random.randint(4, 12):
             continue
         # one-vertex differential
         diffs[idx] = vtx_pos[idx] - torch.mean(data.get_vertex_coordinates(vtx_pos, vtx_neigh[idx]))
@@ -172,152 +173,154 @@ def fitTake(max_iter, lr_base, lr_ramp, basemeshpath, localblpath, globalblpath,
     :param mp4_interval: Interval in which to save mp4 frames. 0 for no mp4 saving.
     :return:
     """
-
     if mp4_interval:
         writer = imageio.get_writer(f'{out_dir}/progress.mp4', mode='I', fps=30, codec='libx264', bitrate='16M')
     else:
         writer = None
+    try:
 
-    flip_opt_interval = 500
+        flip_opt_interval = 500
 
-    cams = os.listdir(imdir)
-    n_frames = assertNumFrames(cams, imdir)
-    # calibrations
-    path = r"C:\Users\Henkka\Projects\invrend-fpc\data\calibration\2021-07-01\DI_calibration.json"
-    with open(calibpath) as json_file:
-        calibs = json.load(json_file)
+        cams = os.listdir(imdir)
+        n_frames = assertNumFrames(cams, imdir)
+        n_frames = 5
+        # calibrations
+        path = r"C:\Users\Henkka\Projects\invrend-fpc\data\calibration\2021-07-01\DI_calibration.json"
+        with open(calibpath) as json_file:
+            calibs = json.load(json_file)
 
-    # initialize tensors
-    # basemesh
-    basemesh = data.MeshData(basemeshpath)
-    v_base = torch.tensor(basemesh.vertices, dtype=torch.float32, device='cuda')
-    n_vertices_x3 = v_base.shape[0]
-    n_vertices = n_vertices_x3 // 3
-    pos_idx = torch.tensor(basemesh.faces, dtype=torch.int32, device='cuda')
-    uv = torch.tensor(basemesh.uv, dtype=torch.float32, device='cuda')
-    uv_idx = torch.tensor(basemesh.fuv, dtype=torch.int32, device='cuda')
-    vertex_neighbours = torch.tensor(data.vertex_neighbours(basemesh.faces, n_vertices), dtype=torch.int32, device='cuda')
-    base_vtx_differential = get_vertex_differentials(v_base, vertex_neighbours, n_vertices)
+        # initialize tensors
+        # basemesh
+        basemesh = data.MeshData(basemeshpath)
+        v_base = torch.tensor(basemesh.vertices, dtype=torch.float32, device='cuda')
+        n_vertices_x3 = v_base.shape[0]
+        n_vertices = n_vertices_x3 // 3
+        pos_idx = torch.tensor(basemesh.faces, dtype=torch.int32, device='cuda')
+        uv = torch.tensor(basemesh.uv, dtype=torch.float32, device='cuda')
+        uv_idx = torch.tensor(basemesh.fuv, dtype=torch.int32, device='cuda')
+        vertex_neighbours = torch.tensor(data.vertex_neighbours(basemesh.faces, n_vertices), dtype=torch.int32, device='cuda')
+        base_vtx_differential = get_vertex_differentials(v_base, vertex_neighbours, n_vertices)
 
-    if texpath:
-        tex = np.array(Image.open(texpath))/255.0
-        tex = tex[..., np.newaxis]
-        tex = np.flip(tex, 0)
-    else:
-        tex = np.random.uniform(low=0.0, high=1.0, size=texshape)
-    tex_opt = torch.tensor(tex.copy(), dtype=torch.float32, device='cuda', requires_grad=True)
-    t_opt = torch.tensor([0.0, 0.0, 0.0], dtype=torch.float32, device='cuda', requires_grad=True)
-    # we can't init the rotation to exactly 0.0 as the gradients are then not stable
-    rotvec_opt = torch.tensor([0.01, 0.01, 0.01], dtype=torch.float32, device='cuda', requires_grad=True)
+        if texpath:
+            tex = np.array(Image.open(texpath))/255.0
+            tex = tex[..., np.newaxis]
+            tex = np.flip(tex, 0)
+        else:
+            tex = np.random.uniform(low=0.0, high=1.0, size=texshape)
+        tex_opt = torch.tensor(tex.copy(), dtype=torch.float32, device='cuda', requires_grad=True)
+        t_opt = torch.tensor([0.0, 0.0, 0.0], dtype=torch.float32, device='cuda', requires_grad=True)
+        # we can't init the rotation to exactly 0.0 as the gradients are then not stable
+        rotvec_opt = torch.tensor([0.01, 0.01, 0.01], dtype=torch.float32, device='cuda', requires_grad=True)
 
-    # blendshapes and mappings
-    m1, m2, m3, v_f = setup_dataset(n_frames, n_vertices_x3)
+        # blendshapes and mappings
+        m1, m2, m3, v_f = setup_dataset(n_frames, n_vertices_x3)
 
-    # context and optimizer
-    print("Setting up RasterizeGLContext and optimizer...")
-    glctx = dr.RasterizeGLContext()
-    # local response norm for image contrast normalization
-    lrn = torch.nn.LocalResponseNorm(2)
+        # context and optimizer
+        print("Setting up RasterizeGLContext and optimizer...")
+        glctx = dr.RasterizeGLContext()
+        # local response norm for image contrast normalization
+        lrn = torch.nn.LocalResponseNorm(2)
 
-    # starting camera iteration
-    for cam in cams:
-        # get camera calibration
-        calib = calibs[cam.split("_")[1]]
-        intr = np.asarray(calib['intrinsic'], dtype=np.float32)
-        dist = np.asarray(calib['distortion'], dtype=np.float32)
-        rot = np.asarray(calib['rotation'], dtype=np.float32)
-        trans = np.asarray(calib['translation'], dtype=np.float32)
+        # starting camera iteration
+        for cam in cams:
+            # get camera calibration
+            calib = calibs[cam.split("_")[1]]
+            intr = np.asarray(calib['intrinsic'], dtype=np.float32)
+            dist = np.asarray(calib['distortion'], dtype=np.float32)
+            rot = np.asarray(calib['rotation'], dtype=np.float32)
+            trans_calib = np.asarray(calib['translation'], dtype=np.float32)
 
-        camdir = os.path.join(imdir, cam)
-        frames = os.listdir(camdir)
-        for i, frame in enumerate(frames):
+            camdir = os.path.join(imdir, cam)
+            frames = os.listdir(camdir)
+            for i, frame in enumerate(frames):
+                if i >= n_frames-1:
+                    break
 
-            # ================================================================
-            # UPDATE PARAMETERS HERE
-            optimizer = torch.optim.Adam([m1, m2, m3, tex_opt], lr=lr_base, weight_decay=10e-1)
-            scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer,
-                                                          lr_lambda=lambda x: lr_ramp ** (float(x) / float(max_iter)))
-            # ================================================================
+                # set one-hot frame index
+                framenum = int(os.path.splitext(frame)[0].split("_")[-1])
+                v_f[framenum] = 1.0
 
-            # reference image to render against
-            img = np.array(Image.open(os.path.join(camdir, frame)))
-            # img = cv2.undistort(img, intr, dist)
-            ref = torch.from_numpy(np.flip(img, 0).copy()).cuda()
-            ref = ref.reshape((ref.shape[0], ref.shape[1], 1))
+                # ================================================================
+                # UPDATE PARAMETERS HERE
+                optimizer = torch.optim.Adam([m1, m2, m3], lr=lr_base, weight_decay=10e-1)
+                scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer,
+                                                              lr_lambda=lambda x: lr_ramp ** (float(x) / float(max_iter)))
+                # ================================================================
 
-            # filters
-            """ref_norm = lrn(ref.permute(0, 2, 1))
-            ref_norm = ref_norm.permute(0, 2, 1)
-            smoothing = utils.GaussianSmoothing(1, 32, 1)
-            smoothing = smoothing.to('cuda')
-            ref_blur = smoothing(torch.reshape(ref_norm, (1, ref_norm.shape[2], ref_norm.shape[0], ref_norm.shape[1])))"""
+                # reference image to render against
+                img = np.array(Image.open(os.path.join(camdir, frame)))
+                # img = cv2.undistort(img, intr, dist)
+                ref = torch.from_numpy(np.flip(img, 0).copy()).cuda()
+                ref = ref.reshape((ref.shape[0], ref.shape[1], 1))
 
-            # set one-hot frame index
-            framenum = int(os.path.splitext(frame)[0].split("_")[-1])
-            v_f[framenum] = 1.0
+                # filters
+                """ref_norm = lrn(ref.permute(0, 2, 1))
+                ref_norm = ref_norm.permute(0, 2, 1)
+                smoothing = utils.GaussianSmoothing(1, 32, 1)
+                smoothing = smoothing.to('cuda')
+                ref_blur = smoothing(torch.reshape(ref_norm, (1, ref_norm.shape[2], ref_norm.shape[0], ref_norm.shape[1])))"""
 
-            # modelview and projection
-            # lens distortion currently handled as preprocess in reference images
-            projection = camera.intrinsic_to_projection(intr)
-            proj = torch.from_numpy(projection).cuda()
-            modelview = camera.extrinsic_to_modelview(rot, trans)
-            trans = torch.tensor(camera.translate(0.0, 0.0, 0.0), dtype=torch.float32, device='cuda')
-            t_mv = torch.matmul(torch.from_numpy(modelview).cuda(), trans)
-
-            # render
-            for it in range(max_iter + 1):
-                if it < 500:
-                    rigid_trans = camera.rigid_grad(t_opt*0.1, roma.rotvec_to_rotmat(rotvec_opt*0.1))
-                else:
-                    rigid_trans = camera.rigid_grad(t_opt * 0.05, roma.rotvec_to_rotmat(rotvec_opt * 0.05))
-                tr = torch.matmul(rigid_trans, t_mv)
-                mvp = torch.matmul(proj, tr)
-
-                # get blended vertex positions according to eq.
-                vtx_pos = blend(v_base, m1, m2, m3, v_f)
-                # split [n_vertices * 3] to [n_vertices, 3] as a view of the original tensor
-                vtx_pos_split = torch.reshape(vtx_pos, (vtx_pos.shape[0] // 3, 3))
+                # modelview and projection
+                # lens distortion currently handled as preprocess in reference images
+                projection = camera.intrinsic_to_projection(intr)
+                proj = torch.from_numpy(projection).cuda()
+                modelview = camera.extrinsic_to_modelview(rot, trans_calib)
+                trans = torch.tensor(camera.translate(0.0, 0.0, 0.0), dtype=torch.float32, device='cuda')
+                t_mv = torch.matmul(torch.from_numpy(modelview).cuda(), trans)
 
                 # render
-                colour = render(glctx, mvp, vtx_pos_split, pos_idx, uv, uv_idx, tex_opt, resolution, enable_mip, max_mip_level)
+                for it in range(max_iter + 1):
+                    if it < 500:
+                        rigid_trans = camera.rigid_grad(t_opt*0.1, roma.rotvec_to_rotmat(rotvec_opt*0.1))
+                    else:
+                        rigid_trans = camera.rigid_grad(t_opt * 0.05, roma.rotvec_to_rotmat(rotvec_opt * 0.05))
+                    tr = torch.matmul(rigid_trans, t_mv)
+                    mvp = torch.matmul(proj, tr)
 
-                """
-                =======================
-                Compute loss and train.
-                =======================
-                """
+                    # get blended vertex positions according to eq.
+                    vtx_pos = blend(v_base, m1, m2, m3, v_f)
+                    # split [n_vertices * 3] to [n_vertices, 3] as a view of the original tensor
+                    vtx_pos_split = torch.reshape(vtx_pos, (vtx_pos.shape[0] // 3, 3))
 
-                loss_pixel = torch.mean((ref - colour*255) ** 2)  # L2 pixel loss, *255 to channels from opengl
-                #loss_laplacian = laplacian_regularization(base_vtx_differential, vtx_pos, vertex_neighbours, n_vertices)
-                loss = loss_pixel# + 3*loss_laplacian
-                optimizer.zero_grad()
-                loss.backward()
-                optimizer.step()
-                scheduler.step()
+                    # render
+                    colour = render(glctx, mvp, vtx_pos_split, pos_idx, uv, uv_idx, tex_opt, resolution, enable_mip, max_mip_level)
 
-                # Print loss logging
-                log = (log_interval and (it % log_interval == 0))
-                if log:
-                    print(f"It[{it}] - Loss: {loss}")
+                    """
+                    =======================
+                    Compute loss and train.
+                    =======================
+                    """
 
-                # Show/save image.
-                display_image = (display_interval and (it % display_interval == 0)) or it == max_iter
-                save_mp4 = (mp4_interval and (it % mp4_interval == 0))
-                if display_image or save_mp4:
-                    img_ref = ref.cpu().numpy()
-                    img_ref = np.flip(np.array(img_ref.copy(), dtype=np.float32) / 255, 0)
-                    img_col = np.flip(colour.cpu().detach().numpy(), 0)
-                    result_image = utils.make_img(np.stack([img_ref, img_col]))
-                    if display_image:
-                        utils.display_image(result_image)
-                    if save_mp4:
-                        writer.append_data(np.clip(np.rint(result_image * 255.0), 0, 255).astype(np.uint8))
-                    # img_out = colour[0].cpu().numpy()
-                    # utils.display_image(img_out, size=img.shape[::-1])
-            # utils.save_image(os.path.join(out_dir, frame), img_col)
-            v_f[framenum] = 0.0
-            break
-        break
+                    loss_pixel = torch.mean((ref - colour*255) ** 2)  # L2 pixel loss, *255 to channels from opengl
+                    loss_laplacian = laplacian_regularization(base_vtx_differential, vtx_pos, vertex_neighbours, n_vertices)
+                    loss = loss_pixel + 3*loss_laplacian
+                    optimizer.zero_grad()
+                    loss.backward()
+                    optimizer.step()
+                    scheduler.step()
 
-    if writer is not None:
-        writer.close()
+                    # Print loss logging
+                    log = (log_interval and (it % log_interval == 0))
+                    if log:
+                        print(f"It[{it}] - Loss: {loss}")
+
+                    # Show/save image.
+                    display_image = (display_interval and (it % display_interval == 0)) or it == max_iter
+                    save_mp4 = (mp4_interval and (it % mp4_interval == 0))
+                    if display_image or save_mp4:
+                        img_ref = ref.cpu().numpy()
+                        img_ref = np.flip(np.array(img_ref.copy(), dtype=np.float32) / 255, 0)
+                        img_col = np.flip(colour.cpu().detach().numpy(), 0)
+                        result_image = utils.make_img(np.stack([img_ref, img_col]))
+                        if display_image:
+                            utils.display_image(result_image)
+                        if save_mp4:
+                            writer.append_data(np.clip(np.rint(result_image * 255.0), 0, 255).astype(np.uint8))
+                        # img_out = colour[0].cpu().numpy()
+                        # utils.display_image(img_out, size=img.shape[::-1])
+                # utils.save_image(os.path.join(out_dir, frame), img_col)
+                v_f[framenum] = 0.0
+                
+    except KeyboardInterrupt:
+        if writer is not None:
+            writer.close()
