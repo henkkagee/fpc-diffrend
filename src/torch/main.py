@@ -24,7 +24,8 @@ def run():
         out_dir=r"C:\Users\Henkka\Projects\invrend-fpc\data\out_img\dialogue_sc1_t3_short",
         resolution=(1600, 1200),
         mp4_interval=25,
-        texpath=r"C:\Users\Henkka\Projects\invrend-fpc\data\ilkka_villi_anchor_greyscale_fix.png"
+        texpath=r"C:\Users\Henkka\Projects\invrend-fpc\data\ilkka_villi_anchor_greyscale_fix.png",
+        maskpath=r"C:\Users\Henkka\Projects\invrend-fpc\data\vertexmasks",
     )
 
 # -----------------------------------------------------------

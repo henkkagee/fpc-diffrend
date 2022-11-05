@@ -53,6 +53,15 @@ def blend(v_base, maps, dataset, frames):
         bl_res = torch.matmul(dataset['local'], mapped)
         vtx_pos = torch.add(v_base, bl_res)
         return vtx_pos
+    else:
+        mapped = torch.matmul(maps['local'], frames)
+        bl_res = torch.matmul(dataset['local'], mapped)
+
+        # blend with ml cache expressions through vertex masks on mouth and eyes
+        
+
+        vtx_pos = torch.add(v_base, bl_res)
+        return vtx_pos
 
 # -------------------------------------------------------------------------------------------------
 
@@ -205,7 +214,7 @@ def laplacian_regularization(base_vtx_differential, vtx_pos, vertex_neighbours, 
 
 def fitTake(max_iter, lr_base, lr_ramp, pose_lr, cam_iter, basemeshpath, localblpath, globalblpath, display_interval,
             log_interval, imdir, calibpath, enable_mip, max_mip_level, texshape, out_dir, resolution,
-            mp4_interval, texpath=""):
+            mp4_interval, texpath="", maskpath=""):
     """
     Fit one take (continuous range of frames).
 
@@ -228,6 +237,7 @@ def fitTake(max_iter, lr_base, lr_ramp, pose_lr, cam_iter, basemeshpath, localbl
     :param out_dir: Directory to save result data to
     :param resolution: Resolution to render in (height, width)
     :param mp4_interval: Interval in which to save mp4 frames. 0 for no mp4 saving.
+    :param maskpath: Path to vertex mask directory
     :return:
     """
 
