@@ -5,10 +5,8 @@ import json
 # 3rd party
 import numpy as np
 import torch
-from torch.nn.functional import conv2d
 import nvdiffrast.torch as dr
 from PIL import Image
-import roma as roma
 import imageio
 
 # local
@@ -47,9 +45,9 @@ def render(glctx, mtx, pos, pos_idx, uv, uv_idx, tex, resolution):
 # -------------------------------------------------------------------------------------------------
 
 # Get objs
-DIR = r"C:\Users\Henkka\Projects\invrend-fpc\data\out_img\dialogue_sc1_t3_short\result"
+DIR = r"C:\Users\Henkka\Projects\invrend-fpc\data\out_img\dialogue_sc1_t3\result"
 objs = os.listdir(DIR)
-texpath = os.path.join(DIR, "texture.png")
+texpath = os.path.join(DIR, "texture+wireframe.png")
 
 # common mesh info
 basemesh = data.MeshData(os.path.join(DIR, "basemesh.obj"))
@@ -57,6 +55,8 @@ pos_idx = torch.tensor(basemesh.faces, dtype=torch.int32, device='cuda')
 uv = torch.tensor(basemesh.uv, dtype=torch.float32, device='cuda')
 uv_idx = torch.tensor(basemesh.fuv, dtype=torch.int32, device='cuda')
 tex = np.array(Image.open(texpath))/255.0
+tex = tex[..., np.newaxis]
+tex = np.flip(tex, 0)
 tex = torch.tensor(tex.copy(), dtype=torch.float32, device='cuda', requires_grad=True)
 resolution = (1600, 1200)
 
@@ -67,13 +67,14 @@ calibpath = r"C:\Users\Henkka\Projects\invrend-fpc\data\calibration\combined\cal
 cam = "pod2texture"
 with open(calibpath) as json_file:
     calibs = json.load(json_file)
-calib = calibs[cam.split("_")[1]]
+calib = calibs[cam]
 intr = np.asarray(calib['intrinsic'], dtype=np.float32)
 dist = np.asarray(calib['distortion'], dtype=np.float32)
 rot = np.asarray(calib['rotation'], dtype=np.float32)
 trans_calib = np.asarray(calib['translation'], dtype=np.float32)
 
 glctx = dr.RasterizeGLContext(device='cuda')
+writer = imageio.get_writer(f'{DIR}/result_vid.mp4', mode='I', fps=30, codec='libx264', bitrate='16M')
 
 for i, obj in enumerate(objs):
     # get vertices
@@ -93,7 +94,14 @@ for i, obj in enumerate(objs):
     mvp = torch.matmul(proj, t_mv)
 
     vtx_pos_split = torch.reshape(vtx_pos, (vtx_pos.shape[0] // 3, 3))
-    # wireframe?
     colour = render(glctx, mvp, vtx_pos_split, pos_idx, uv, uv_idx, tex, resolution)
 
-    # save
+    """img_col = np.flip(torch.reshape(
+        colour, (colour.shape[2], colour.shape[3], colour.shape[1])).cpu().detach().numpy(), 0)"""
+
+    img_col = np.flip(colour.cpu().detach().numpy())
+    # result_image = utils.make_img(img_col)
+    utils.display_image(img_col)
+    writer.append_data(np.clip(np.rint(img_col * 255.0), 0, 255).astype(np.uint8))
+
+writer.close()

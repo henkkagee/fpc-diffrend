@@ -261,10 +261,10 @@ def fitTake(max_iter, lr_base, lr_ramp, pose_lr, cam_iter, basemeshpath, localbl
             tex = np.flip(tex, 0)
         else:
             tex = np.random.uniform(low=0.0, high=1.0, size=texshape)
-        tex_opt = torch.tensor(tex.copy(), dtype=torch.float32, device='cuda', requires_grad=True)
-        t_opt = torch.tensor([0.0, 0.0, 0.0], dtype=torch.float32, device='cuda', requires_grad=True)
+        tex_opt = torch.tensor(tex.copy(), dtype=torch.float32, device='cuda', requires_grad=False)
+        t_opt = torch.tensor([0.0, 0.0, 0.0], dtype=torch.float32, device='cuda', requires_grad=False)
         # initial unit quaternion for rotation optimization
-        q_opt = torch.tensor([0.0, 0.0, 0.0, 1.0], dtype=torch.float32, device='cuda', requires_grad=True)
+        q_opt = torch.tensor([0.0, 0.0, 0.0, 1.0], dtype=torch.float32, device='cuda', requires_grad=False)
         # final shapes
         result = torch.empty(size=(n_frames, basemesh.vertices.shape[0]), dtype=torch.float32, device='cuda')
 
