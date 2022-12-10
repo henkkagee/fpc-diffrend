@@ -58,7 +58,7 @@ def blend(v_base, maps, dataset, frames):
         bl_res = torch.matmul(dataset['local'], mapped)
 
         # blend with ml cache expressions through vertex masks on mouth and eyes
-        
+
 
         vtx_pos = torch.add(v_base, bl_res)
         return vtx_pos
@@ -160,8 +160,12 @@ def save(meshes, uv, pos_idx, texture, directory):
     directory = os.path.join(directory, "result")
     if not os.path.isdir(directory):
         os.mkdir(directory)
-    with open(os.path.join(directory, "faces.txt"), mode="r") as f:
-        faces = f.readlines()
+    try:
+        with open(os.path.join(directory, "faces.txt"), mode="r") as f:
+            faces = f.readlines()
+    except Exception:
+        print("faces.txt not found!")
+        faces = ""
     """with open(os.path.join(directory, "vn.txt"), mode="r") as f:
         faces = f.readlines()"""
     for i, mesh in enumerate(meshes):
@@ -210,7 +214,6 @@ def laplacian_regularization(base_vtx_differential, vtx_pos, vertex_neighbours, 
     return loss
 
 # -------------------------------------------------------------------------------------------------
-
 
 def fitTake(max_iter, lr_base, lr_ramp, pose_lr, cam_iter, basemeshpath, localblpath, globalblpath, display_interval,
             log_interval, imdir, calibpath, enable_mip, max_mip_level, texshape, out_dir, resolution,
@@ -271,10 +274,17 @@ def fitTake(max_iter, lr_base, lr_ramp, pose_lr, cam_iter, basemeshpath, localbl
             tex = np.flip(tex, 0)
         else:
             tex = np.random.uniform(low=0.0, high=1.0, size=texshape)
-        tex_opt = torch.tensor(tex.copy(), dtype=torch.float32, device='cuda', requires_grad=False)
-        t_opt = torch.tensor([0.0, 0.0, 0.0], dtype=torch.float32, device='cuda', requires_grad=False)
+        tex_opt = torch.tensor(tex.copy(), dtype=torch.float32, device='cuda', requires_grad=True)
+
+        # per-camera pose optimization
+        # t_opt = torch.tensor([0.0, 0.0, 0.0], dtype=torch.float32, device='cuda', requires_grad=True)
+        t_opt = torch.zeros([9, 3], dtype=torch.float32, device='cuda', requires_grad=True)
         # initial unit quaternion for rotation optimization
-        q_opt = torch.tensor([0.0, 0.0, 0.0, 1.0], dtype=torch.float32, device='cuda', requires_grad=False)
+        # q_opt = torch.tensor([0.0, 0.0, 0.0, 1.0], dtype=torch.float32, device='cuda', requires_grad=True)
+        q_opt = torch.zeros([9, 4], dtype=torch.float32, device='cuda', requires_grad=True)
+        q_opt[:, 3] = 0.0
+        cam_idx_tensor = torch.zeros(10, dtype=torch.float32, device='cuda', requires_grad=False).T
+
         # final shapes
         result = torch.empty(size=(n_frames, basemesh.vertices.shape[0]), dtype=torch.float32, device='cuda')
 
@@ -292,7 +302,7 @@ def fitTake(max_iter, lr_base, lr_ramp, pose_lr, cam_iter, basemeshpath, localbl
 
         # starting camera iteration
         for i in range(cam_iter):
-            for cam in cams:
+            for c, cam in enumerate(cams):
                 # get camera calibration
                 calib = calibs[cam.split("_")[1]]
                 intr = np.asarray(calib['intrinsic'], dtype=np.float32)
@@ -306,8 +316,8 @@ def fitTake(max_iter, lr_base, lr_ramp, pose_lr, cam_iter, basemeshpath, localbl
                     # ================================================================
                     # UPDATE PARAMETERS HERE
                     optimizer = torch.optim.Adam([{"params": maps['local']},
-                                                  {"params": t_opt},
-                                                  {"params": q_opt},
+                                                  {"params": t_opt, 'lr': 10e-4 * 0.5},
+                                                  {"params": q_opt, 'lr': 10e-4 * 0.5},
                                                   {"params": tex_opt, 'lr': 10e-4 * 0.5, 'weight_decay': 0.0}],
                                                  lr=lr_base, weight_decay=10e-1)
                     scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer,
@@ -326,10 +336,9 @@ def fitTake(max_iter, lr_base, lr_ramp, pose_lr, cam_iter, basemeshpath, localbl
                     ref_blur = smoothing(torch.reshape(ref_norm, (1, ref_norm.shape[2], ref_norm.shape[0], ref_norm.shape[1])))
 
                     # set one-hot frame index
-                    # framenum = int(os.path.splitext(frame)[0].split("_")[-1])
-                    # TODO: comment away later
                     framenum = i
                     v_f[framenum] = 1.0
+                    cam_idx_tensor[c] = 1.0
 
                     # modelview and projection
                     # lens distortion currently handled as preprocess in reference images
@@ -341,11 +350,12 @@ def fitTake(max_iter, lr_base, lr_ramp, pose_lr, cam_iter, basemeshpath, localbl
 
                     # render
                     for it in range(max_iter + 1):
-
-                        if it < 500:
-                            rigid_trans = camera.rigid_grad(t_opt * 0.10, roma.unitquat_to_rotmat(q_opt))
+                        if it < 200:
+                            rigid_trans = camera.rigid_grad(torch.matmul(t_opt, cam_idx_tensor) * 0.05,
+                                                            roma.unitquat_to_rotmat(torch.matmul(q_opt, cam_idx_tensor)))
                         else:
-                            rigid_trans = camera.rigid_grad(t_opt * 0.01, roma.unitquat_to_rotmat(q_opt))
+                            rigid_trans = camera.rigid_grad(torch.matmul(t_opt, cam_idx_tensor) * 0.01,
+                                                            roma.unitquat_to_rotmat(torch.matmul(q_opt, cam_idx_tensor)))
                         tr = torch.matmul(rigid_trans, t_mv)
                         mvp = torch.matmul(proj, tr)
 
@@ -377,7 +387,8 @@ def fitTake(max_iter, lr_base, lr_ramp, pose_lr, cam_iter, basemeshpath, localbl
                         # built-in gaussian not available for torch tensors since we can't use the right torch3d version
                         colour_blur = smoothing(torch.reshape(colour_norm, (1, colour_norm.shape[2], colour_norm.shape[0], colour_norm.shape[1])))
 
-                        loss = torch.mean((ref_blur - colour_blur*255) ** 2)  # L2 pixel loss, *255 to channels from opengl
+                        # L2 pixel loss, *255 to channels from opengl. Second loss term to penalize large translations
+                        loss = torch.mean((ref_blur - colour_blur*255) ** 2)#  + torch.sqrt(torch.sum(t_opt))
                         optimizer.zero_grad()
                         loss.backward()
                         optimizer.step()
@@ -422,6 +433,7 @@ def fitTake(max_iter, lr_base, lr_ramp, pose_lr, cam_iter, basemeshpath, localbl
 
                     # utils.save_image(os.path.join(out_dir, frame), img_col)
                     v_f[framenum] = 0.0
+                    cam_idx_tensor[c] = 0.0
                     result[framenum] = vtx_pos
 
     except KeyboardInterrupt:

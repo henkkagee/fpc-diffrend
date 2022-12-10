@@ -45,9 +45,9 @@ def render(glctx, mtx, pos, pos_idx, uv, uv_idx, tex, resolution):
 # -------------------------------------------------------------------------------------------------
 
 # Get objs
-DIR = r"C:\Users\Henkka\Projects\invrend-fpc\data\out_img\dialogue_sc1_t3\result"
+DIR = r"C:\Users\Henkka\Projects\invrend-fpc\data\out_img\dialogue_sc1_t3_short\result"
 objs = os.listdir(DIR)
-texpath = os.path.join(DIR, "texture+wireframe.png")
+texpath = os.path.join(DIR, "ilkka_villi_anchor_greyscale_fix.png")
 
 # common mesh info
 basemesh = data.MeshData(os.path.join(DIR, "basemesh.obj"))
@@ -57,6 +57,7 @@ uv_idx = torch.tensor(basemesh.fuv, dtype=torch.int32, device='cuda')
 tex = np.array(Image.open(texpath))/255.0
 tex = tex[..., np.newaxis]
 tex = np.flip(tex, 0)
+tex = np.flip(tex, 1)
 tex = torch.tensor(tex.copy(), dtype=torch.float32, device='cuda', requires_grad=True)
 resolution = (1600, 1200)
 
@@ -74,7 +75,7 @@ rot = np.asarray(calib['rotation'], dtype=np.float32)
 trans_calib = np.asarray(calib['translation'], dtype=np.float32)
 
 glctx = dr.RasterizeGLContext(device='cuda')
-writer = imageio.get_writer(f'{DIR}/result_vid.mp4', mode='I', fps=30, codec='libx264', bitrate='16M')
+writer = imageio.get_writer(f'{DIR}/result_vid_tex.mp4', mode='I', fps=30, codec='libx264', bitrate='16M')
 
 for i, obj in enumerate(objs):
     # get vertices
@@ -102,6 +103,7 @@ for i, obj in enumerate(objs):
     img_col = np.flip(colour.cpu().detach().numpy())
     # result_image = utils.make_img(img_col)
     utils.display_image(img_col)
+    imageio.imwrite(f'{DIR}/frame{i}.png', img_col, format='png')
     writer.append_data(np.clip(np.rint(img_col * 255.0), 0, 255).astype(np.uint8))
 
 writer.close()
