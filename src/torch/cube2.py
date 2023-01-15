@@ -305,7 +305,7 @@ def fit_pose(max_iter           = 10000,
 
 def main():
 
-    path = r"C:\Users\Henkka\Projects\invrend-fpc\data\calibration\2018-11-15\calibration_test_DI.json"
+    path = r"C:\Users\Henrik\fpc-diffrend\calibration\2018-11-15\calibration_test_DI.json"
     with open(path) as json_file:
         calibs = json.load(json_file)
 
@@ -315,14 +315,14 @@ def main():
         repeats=1,
         log_interval=10,
         display_interval=5,
-        out_dir=r"C:/Users/Henkka/Projects/invrend-fpc/data/out_img/cube2",
+        out_dir=r"C:/Users/Henkka/Projects/fpc-diffrend/data/out_img/cube2",
         log_fn='log.txt',
         mp4save_interval=10,
         mp4save_fn='progress.mp4',
-        basemeshpath=r"C:\Users\Henkka\Projects\invrend-fpc\data\cube\rubiks_fixed.obj",
-        imdir=r"C:\Users\Henkka\Projects\invrend-fpc\data\cube\20220310\neutrals\rubik_cube\neutral\take0001\fullres",
+        basemeshpath=r"C:\Users\Henrik\fpc-diffrend\data\cube\rubiks_fixed.obj",
+        imdir=r"C:\Users\Henrik\fpc-diffrend\data\cube\20220310\neutrals\rubik_cube\neutral\take0001\fullres",
         calibs=calibs,
-        texpath=r"C:\Users\Henkka\Projects\invrend-fpc\data\cube\rubiks.png",
+        texpath=r"C:\Users\Henrik\fpc-diffrend\data\cube\rubiks.png",
         resolution=(1600, 1200)
     )
 

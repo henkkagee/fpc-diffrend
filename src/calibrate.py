@@ -89,13 +89,13 @@ calibdict = {}
 imgpoints = []  # 2d points in image plane.
 img = None
 prevcamname = "pod1primary"
-path = "C:/Users/Henkka/Projects/invrend-fpc/data/calibration/combined/extracted"
-# path = "C:/Users/Henkka/Projects/invrend-fpc/data/calibration/2021-07-01"
+path = "C:/Users/Henkka/Projects/fpc-diffrend/data/calibration/combined/extracted"
+# path = "C:/Users/Henkka/Projects/fpc-diffrend/data/calibration/2021-07-01"
 # path = r"\\rmd.remedy.fi\Capture\System\RAW\Calibrations\2021-12-07"
 images = os.listdir(path)
 
 # DI xmls
-tree = et.parse(r"C:\Users\Henkka\Projects\invrend-fpc\data\cube\20220310\2021-12-07-01.dicx")
+tree = et.parse(r"C:\Users\Henrik\fpc-diffrend\data\cube\20220310\2021-12-07-01.dicx")
 xml_cams = tree.getroot()[3]
 
 # different threshold values to try to account for reflections in the calibration target
@@ -155,7 +155,7 @@ realcamname = changeCamName(prevcamname)
 calibdict[realcamname] = calibrate(objpoints, imgpoints, img, [x for x in xml_cams if x.get('name') == camname+"_0001"][0])
 
 # save calibration file
-json.dump(calibdict, codecs.open("C:/Users/Henkka/Projects/invrend-fpc/data/calibration/combined/calibration_noblur.json",
+json.dump(calibdict, codecs.open("C:/Users/Henkka/Projects/fpc-diffrend/data/calibration/combined/calibration_noblur.json",
                                  'w', encoding='utf-8'),
           separators=(',', ':'),
           sort_keys=True,

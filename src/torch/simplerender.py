@@ -19,7 +19,7 @@ def simple_render():
 
     :return:
     """
-    path = r"C:\Users\Henkka\Projects\invrend-fpc\calibrations\combined\calibration.json"
+    path = r"C:\Users\Henrik\fpc-diffrend\calibrations\combined\calibration.json"
     with open(path) as json_file:
         calibs = json.load(json_file)
     calib = calibs['pod2texture']
@@ -28,15 +28,15 @@ def simple_render():
     rot = np.asarray(calib['rotation'], dtype=np.float32)
     trans = np.asarray(calib['translation'], dtype=np.float32)
 
-    rubiks = data.MeshData(r"C:\Users\Henkka\Projects\invrend-fpc\data\basemesh.obj")
-    # rubiks = data.MeshData(r"C:\Users\Henkka\Projects\invrend-fpc\data\cube\rubiks.obj")
+    rubiks = data.MeshData(r"C:\Users\Henrik\fpc-diffrend\data\basemesh.obj")
+    # rubiks = data.MeshData(r"C:\Users\Henrik\fpc-diffrend\data\cube\rubiks.obj")
 
     pos = torch.tensor(rubiks.vertices, dtype=torch.float32, device='cuda')
     tri = torch.tensor(rubiks.faces, dtype=torch.int32, device='cuda')
     uv = torch.tensor(rubiks.uv, dtype=torch.float32, device='cuda')
     uv_idx = torch.tensor(rubiks.fuv, dtype=torch.int32, device='cuda')
-    # texture = np.array(Image.open(r"C:\Users\Henkka\Projects\invrend-fpc\data\cube\rubiks.png"))/255.0
-    texture = np.array(Image.open(r"C:\Users\Henkka\Projects\invrend-fpc\data\ilkvil_tex_grid.png")) / 255.0
+    # texture = np.array(Image.open(r"C:\Users\Henrik\fpc-diffrend\data\cube\rubiks.png"))/255.0
+    texture = np.array(Image.open(r"C:\Users\Henrik\fpc-diffrend\data\ilkvil_tex_grid.png")) / 255.0
     tex = torch.tensor(texture, dtype=torch.float32, device='cuda')
 
     proj = torch.tensor(camera.intrinsic_to_projection(intr), dtype=torch.float32, device='cuda')

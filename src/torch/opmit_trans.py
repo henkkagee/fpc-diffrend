@@ -20,9 +20,9 @@ def simple_render():
 
     :return:
     """
-    camdir = r"C:\Users\Henkka\Projects\invrend-fpc\data\reference\neutral\ilkvil_neutral_edit_background\range04_pod2texture"
+    camdir = r"C:\Users\Henrik\fpc-diffrend\data\reference\neutral\ilkvil_neutral_edit_background\range04_pod2texture"
     frame = r"range04_pod2texture_0.tif"
-    path = r"C:\Users\Henkka\Projects\invrend-fpc\data\calibration\combined\calibration.json"
+    path = r"C:\Users\Henrik\fpc-diffrend\calibration\combined\calibration.json"
     with open(path) as json_file:
         calibs = json.load(json_file)
     calib = calibs['pod2texture']
@@ -34,15 +34,15 @@ def simple_render():
     fx_opt = torch.tensor([intr[0,0]], dtype=torch.float32, device='cuda', requires_grad=True)
     fy_opt = torch.tensor([intr[1,1]], dtype=torch.float32, device='cuda', requires_grad=True)
 
-    rubiks = data.MeshData(r"C:\Users\Henkka\Projects\invrend-fpc\data\basemesh.obj")
-    # rubiks = data.MeshData(r"C:\Users\Henkka\Projects\invrend-fpc\data\cube\rubiks.obj")
+    rubiks = data.MeshData(r"C:\Users\Henrik\fpc-diffrend\data\basemesh.obj")
+    # rubiks = data.MeshData(r"C:\Users\Henrik\fpc-diffrend\data\cube\rubiks.obj")
 
     pos = torch.tensor(rubiks.vertices, dtype=torch.float32, device='cuda')
     tri = torch.tensor(rubiks.faces, dtype=torch.int32, device='cuda')
     uv = torch.tensor(rubiks.uv, dtype=torch.float32, device='cuda')
     uv_idx = torch.tensor(rubiks.fuv, dtype=torch.int32, device='cuda')
-    # texture = np.array(Image.open(r"C:\Users\Henkka\Projects\invrend-fpc\data\cube\rubiks.png"))/255.0
-    texture = np.array(Image.open(r"C:\Users\Henkka\Projects\invrend-fpc\data\ilkvil_tex_grid_bright.png")) / 255.0
+    # texture = np.array(Image.open(r"C:\Users\Henrik\fpc-diffrend\data\cube\rubiks.png"))/255.0
+    texture = np.array(Image.open(r"C:\Users\Henrik\fpc-diffrend\data\ilkvil_tex_grid_bright.png")) / 255.0
     tex = torch.tensor(texture, dtype=torch.float32, device='cuda')
     tex = tex.reshape((1600, 1600, 1))
 

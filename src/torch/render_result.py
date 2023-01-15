@@ -45,7 +45,7 @@ def render(glctx, mtx, pos, pos_idx, uv, uv_idx, tex, resolution):
 # -------------------------------------------------------------------------------------------------
 
 # Get objs
-DIR = r"C:\Users\Henkka\Projects\invrend-fpc\data\out_img\dialogue_sc1_t3\result"
+DIR = r"C:\Users\Henrik\fpc-diffrend\data\out_img\dialogue_sc1_t3\result"
 objs = os.listdir(DIR)
 texpath = os.path.join(DIR, "texture+wireframe.png")
 
@@ -63,7 +63,7 @@ resolution = (1600, 1200)
 glctx = dr.RasterizeGLContext(device='cuda')
 
 # get camera calibration
-calibpath = r"C:\Users\Henkka\Projects\invrend-fpc\data\calibration\combined\calibration.json"
+calibpath = r"C:\Users\Henrik\fpc-diffrend\calibration\combined\calibration.json"
 cam = "pod2texture"
 with open(calibpath) as json_file:
     calibs = json.load(json_file)

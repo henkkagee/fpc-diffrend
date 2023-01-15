@@ -254,7 +254,7 @@ def fit_cube(max_iter          = 5000,
 def main():
     # Get camera calibration
     # ...
-    path = r"C:\Users\Henkka\Projects\invrend-fpc\data\calibration\2021-07-01\DI_calibration.json"
+    path = r"C:\Users\Henrik\fpc-diffrend\calibration\2021-07-01\DI_calibration.json"
     with open(path) as json_file:
         calibs = json.load(json_file)
 
@@ -265,12 +265,12 @@ def main():
         log_interval=20,
         display_interval=5,
         display_res=1024,
-        out_dir=r"C:\Users\Henkka\Projects\invrend-fpc\data\cube\out_img",
+        out_dir=r"C:\Users\Henrik\fpc-diffrend\data\cube\out_img",
         log_fn='log.txt',
-        basemeshpath=r"C:\Users\Henkka\Projects\invrend-fpc\data\cube\rubiks_bl.obj",
-        imdir=r"C:\Users\Henkka\Projects\invrend-fpc\data\cube\20220310\neutrals\rubik_cube\neutral\take0001\fullres",
+        basemeshpath=r"C:\Users\Henrik\fpc-diffrend\data\cube\rubiks_bl.obj",
+        imdir=r"C:\Users\Henrik\fpc-diffrend\data\cube\20220310\neutrals\rubik_cube\neutral\take0001\fullres",
         calibs=calibs,
-        texpath=r"C:\Users\Henkka\Projects\invrend-fpc\data\cube\rubiks.png"
+        texpath=r"C:\Users\Henrik\fpc-diffrend\data\cube\rubiks.png"
     )
 
 #----------------------------------------------------------------------------

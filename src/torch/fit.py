@@ -244,7 +244,6 @@ def fitTake(max_iter, lr_base, lr_ramp, pose_lr, cam_iter, basemeshpath, localbl
         n_frames = assertNumFrames(cams, imdir)
 
         # calibrations
-        path = r"C:\Users\Henkka\Projects\invrend-fpc\data\calibration\2021-07-01\DI_calibration.json"
         with open(calibpath) as json_file:
             calibs = json.load(json_file)
 
