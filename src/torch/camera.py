@@ -13,9 +13,9 @@ def transform_clip(mvp, pos):
     :param pos: Tensor of vertex positions
     :return: Tensor of transformed vertex positions
     """
-    t_mtx = torch.from_numpy(mvp).cuda() if isinstance(mvp, np.ndarray) else mvp
+    t_mtx = torch.from_numpy(mvp).cuda(device='cuda:1') if isinstance(mvp, np.ndarray) else mvp
     # (x,y,z) -> (x,y,z,1)
-    posw = torch.cat([pos, torch.ones([pos.shape[0], 1]).cuda()], axis=1)
+    posw = torch.cat([pos, torch.ones([pos.shape[0], 1]).cuda(device='cuda:1')], axis=1)
     ret = torch.matmul(posw, t_mtx.t())[None, ...]
     return ret
 
@@ -112,8 +112,8 @@ def translate(x, y, z):
 
 
 def translate_tensor(vec):
-    mat = torch.zeros((4,4), dtype=torch.float32, device='cuda')
-    mat[(0, 1, 2, 3), (0, 1, 2, 3)] = torch.ones(4, dtype=torch.float32, device='cuda')
+    mat = torch.zeros((4,4), dtype=torch.float32, device='cuda:1')
+    mat[(0, 1, 2, 3), (0, 1, 2, 3)] = torch.ones(4, dtype=torch.float32, device='cuda:1')
     # assign xyz translation values into mat to preserve gradients
     # print(f"vec: {vec.shape}\nreshape: {vec.reshape((3,1)).shape}")
     mat[(0, 1, 2), (3, 3, 3)] = torch.flatten(vec)
@@ -124,6 +124,6 @@ def translate_tensor(vec):
 
 def rigid_grad(tvec, rotmat):
     rt = torch.cat((rotmat, torch.reshape(tvec, (3, 1))), 1)
-    br = torch.tensor([0, 0, 0, 1], dtype=torch.float32, device='cuda')
+    br = torch.tensor([0, 0, 0, 1], dtype=torch.float32, device='cuda:1')
     transform = torch.cat((rt, torch.reshape(br, (1, 4))), 0)
     return transform

@@ -19,7 +19,7 @@ def simple_render():
 
     :return:
     """
-    path = r"C:\Users\Henkka\Projects\invrend-fpc\calibrations\combined\calibration.json"
+    path = r"C:\Users\Henrik\fpc-diffrend\calibrations\combined\calibration.json"
     with open(path) as json_file:
         calibs = json.load(json_file)
     calib = calibs['pod2texture']
@@ -28,32 +28,32 @@ def simple_render():
     rot = np.asarray(calib['rotation'], dtype=np.float32)
     trans = np.asarray(calib['translation'], dtype=np.float32)
 
-    rubiks = data.MeshData(r"C:\Users\Henkka\Projects\invrend-fpc\data\basemesh.obj")
-    # rubiks = data.MeshData(r"C:\Users\Henkka\Projects\invrend-fpc\data\cube\rubiks.obj")
+    rubiks = data.MeshData(r"C:\Users\Henrik\fpc-diffrend\data\basemesh.obj")
+    # rubiks = data.MeshData(r"C:\Users\Henrik\fpc-diffrend\data\cube\rubiks.obj")
 
-    pos = torch.tensor(rubiks.vertices, dtype=torch.float32, device='cuda')
-    tri = torch.tensor(rubiks.faces, dtype=torch.int32, device='cuda')
-    uv = torch.tensor(rubiks.uv, dtype=torch.float32, device='cuda')
-    uv_idx = torch.tensor(rubiks.fuv, dtype=torch.int32, device='cuda')
-    # texture = np.array(Image.open(r"C:\Users\Henkka\Projects\invrend-fpc\data\cube\rubiks.png"))/255.0
-    texture = np.array(Image.open(r"C:\Users\Henkka\Projects\invrend-fpc\data\ilkvil_tex_grid.png")) / 255.0
-    tex = torch.tensor(texture, dtype=torch.float32, device='cuda')
+    pos = torch.tensor(rubiks.vertices, dtype=torch.float32, device='cuda:1')
+    tri = torch.tensor(rubiks.faces, dtype=torch.int32, device='cuda:1')
+    uv = torch.tensor(rubiks.uv, dtype=torch.float32, device='cuda:1')
+    uv_idx = torch.tensor(rubiks.fuv, dtype=torch.int32, device='cuda:1')
+    # texture = np.array(Image.open(r"C:\Users\Henrik\fpc-diffrend\data\cube\rubiks.png"))/255.0
+    texture = np.array(Image.open(r"C:\Users\Henrik\fpc-diffrend\data\ilkvil_tex_grid.png")) / 255.0
+    tex = torch.tensor(texture, dtype=torch.float32, device='cuda:1')
 
-    proj = torch.tensor(camera.intrinsic_to_projection(intr), dtype=torch.float32, device='cuda')
-    # proj = torch.tensor(camera.default_projection(), dtype=torch.float32, device='cuda')
-    mv = torch.tensor(camera.extrinsic_to_modelview(rot, trans), dtype=torch.float32, device='cuda')
-    # mv = torch.tensor(camera.default_modelview(), dtype=torch.float32, device='cuda')
+    proj = torch.tensor(camera.intrinsic_to_projection(intr), dtype=torch.float32, device='cuda:1')
+    # proj = torch.tensor(camera.default_projection(), dtype=torch.float32, device='cuda:1')
+    mv = torch.tensor(camera.extrinsic_to_modelview(rot, trans), dtype=torch.float32, device='cuda:1')
+    # mv = torch.tensor(camera.default_modelview(), dtype=torch.float32, device='cuda:1')
 
-    glctx = dr.RasterizeGLContext(device='cuda')
+    glctx = dr.RasterizeGLContext(device='cuda:1')
     for i in range(200):
 
-        tr = torch.matmul(torch.tensor(camera.translate(0.0, 0.0, 0.0), dtype=torch.float32, device='cuda'),
-                          torch.tensor(camera.rotate_x(0.0), dtype=torch.float32, device='cuda'))
-        # tr = torch.matmul(tr, torch.tensor(camera.rotate_y(-0.6), dtype=torch.float32, device='cuda'))
+        tr = torch.matmul(torch.tensor(camera.translate(0.0, 0.0, 0.0), dtype=torch.float32, device='cuda:1'),
+                          torch.tensor(camera.rotate_x(0.0), dtype=torch.float32, device='cuda:1'))
+        # tr = torch.matmul(tr, torch.tensor(camera.rotate_y(-0.6), dtype=torch.float32, device='cuda:1'))
         tp = torch.matmul(mv, tr)
         pos_split = torch.reshape(pos, (pos.shape[0] // 3, 3))
-        proj[(0), (0)] = torch.tensor(intr[(0), (0)], dtype=torch.float32, device='cuda') / intr[0, 2]
-        proj[(1), (1)] = torch.tensor((intr[(1), (1)]), dtype=torch.float32, device='cuda') / intr[1, 2]
+        proj[(0), (0)] = torch.tensor(intr[(0), (0)], dtype=torch.float32, device='cuda:1') / intr[0, 2]
+        proj[(1), (1)] = torch.tensor((intr[(1), (1)]), dtype=torch.float32, device='cuda:1') / intr[1, 2]
         mvp = torch.matmul(proj, tp)
 
         pos_clip = camera.transform_clip(mvp, pos_split)
@@ -64,7 +64,7 @@ def simple_render():
         texc, _ = dr.interpolate(uv[None, ...], rast, uv_idx)
         colour = dr.texture(tex[None, ...], texc, filter_mode='linear')
         colour = dr.antialias(colour, rast, pos_clip, tri)
-        colour = torch.where(rast[..., 3:] > 0, colour, torch.tensor(0.0).cuda())
+        colour = torch.where(rast[..., 3:] > 0, colour, torch.tensor(0.0).cuda(device='cuda:1'))
 
         img = colour.cpu().numpy()[0, ::-1, :, :] # Flip vertically due to opengl standards
 

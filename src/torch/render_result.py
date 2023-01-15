@@ -39,32 +39,32 @@ def render(glctx, mtx, pos, pos_idx, uv, uv_idx, tex, resolution):
     colour = dr.texture(tex[None, ...], texc, filter_mode='linear')
 
     colour = dr.antialias(colour, rast_out, pos_clip, pos_idx)
-    colour = torch.where(rast_out[..., 3:] > 0, colour, torch.tensor(45.0 / 255.0).cuda())
+    colour = torch.where(rast_out[..., 3:] > 0, colour, torch.tensor(45.0 / 255.0).cuda(device='cuda:1'))
     return colour[0]
 
 # -------------------------------------------------------------------------------------------------
 
 # Get objs
-DIR = r"C:\Users\Henkka\Projects\invrend-fpc\data\out_img\dialogue_sc1_t3_short\result"
+DIR = r"C:\Users\Henrik\fpc-diffrend\data\out\dialogue_sc1_t3_short\result"
 objs = os.listdir(DIR)
 texpath = os.path.join(DIR, "ilkka_villi_anchor_greyscale_fix.png")
 
 # common mesh info
 basemesh = data.MeshData(os.path.join(DIR, "basemesh.obj"))
-pos_idx = torch.tensor(basemesh.faces, dtype=torch.int32, device='cuda')
-uv = torch.tensor(basemesh.uv, dtype=torch.float32, device='cuda')
-uv_idx = torch.tensor(basemesh.fuv, dtype=torch.int32, device='cuda')
+pos_idx = torch.tensor(basemesh.faces, dtype=torch.int32, device='cuda:1')
+uv = torch.tensor(basemesh.uv, dtype=torch.float32, device='cuda:1')
+uv_idx = torch.tensor(basemesh.fuv, dtype=torch.int32, device='cuda:1')
 tex = np.array(Image.open(texpath))/255.0
 tex = tex[..., np.newaxis]
 tex = np.flip(tex, 0)
 tex = np.flip(tex, 1)
-tex = torch.tensor(tex.copy(), dtype=torch.float32, device='cuda', requires_grad=True)
+tex = torch.tensor(tex.copy(), dtype=torch.float32, device='cuda:1', requires_grad=True)
 resolution = (1600, 1200)
 
-glctx = dr.RasterizeGLContext(device='cuda')
+glctx = dr.RasterizeGLContext(device='cuda:1')
 
 # get camera calibration
-calibpath = r"C:\Users\Henkka\Projects\invrend-fpc\data\calibration\combined\calibration.json"
+calibpath = r"C:\Users\Henrik\fpc-diffrend\calibration\combined\calibration.json"
 cam = "pod2texture"
 with open(calibpath) as json_file:
     calibs = json.load(json_file)
@@ -74,7 +74,7 @@ dist = np.asarray(calib['distortion'], dtype=np.float32)
 rot = np.asarray(calib['rotation'], dtype=np.float32)
 trans_calib = np.asarray(calib['translation'], dtype=np.float32)
 
-glctx = dr.RasterizeGLContext(device='cuda')
+glctx = dr.RasterizeGLContext(device='cuda:1')
 writer = imageio.get_writer(f'{DIR}/result_vid_tex.mp4', mode='I', fps=30, codec='libx264', bitrate='16M')
 
 for i, obj in enumerate(objs):
@@ -85,13 +85,13 @@ for i, obj in enumerate(objs):
             if line.startswith("v "):
                 vertices.extend([float(x) for x in line.strip().split(" ")[1:]])
 
-    vtx_pos = torch.tensor(vertices, dtype=torch.float32, device='cuda')
+    vtx_pos = torch.tensor(vertices, dtype=torch.float32, device='cuda:1')
 
     projection = camera.intrinsic_to_projection(intr)
-    proj = torch.from_numpy(projection).cuda()
+    proj = torch.from_numpy(projection).cuda(device='cuda:1')
     modelview = camera.extrinsic_to_modelview(rot, trans_calib)
-    trans = torch.tensor(camera.translate(0.0, 0.0, 0.0), dtype=torch.float32, device='cuda')
-    t_mv = torch.matmul(torch.from_numpy(modelview).cuda(), trans)
+    trans = torch.tensor(camera.translate(0.0, 0.0, 0.0), dtype=torch.float32, device='cuda:1')
+    t_mv = torch.matmul(torch.from_numpy(modelview).cuda(device='cuda:1'), trans)
     mvp = torch.matmul(proj, t_mv)
 
     vtx_pos_split = torch.reshape(vtx_pos, (vtx_pos.shape[0] // 3, 3))

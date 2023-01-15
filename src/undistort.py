@@ -6,15 +6,15 @@ from PIL import Image
 
 
 
-path = r"C:\Users\Henkka\Projects\invrend-fpc/data/calibration/2021-07-01/calibration_DIlens.json"
+path = r"C:\Users\Henrik\fpc-diffrend/calibration/2021-07-01/calibration_DIlens.json"
 with open(path, 'r') as json_file:
     calib = json.load(json_file)
 
-if not os.path.isdir(r'C:\Users\Henkka\Projects\invrend-fpc/data/img_undistort/take0001'):
-    os.mkdir(r'C:\Users\Henkka\Projects\invrend-fpc/data/img_undistort/cube')
+if not os.path.isdir(r'C:\Users\Henrik\fpc-diffrend/data/img_undistort/take0001'):
+    os.mkdir(r'C:\Users\Henrik\fpc-diffrend/data/img_undistort/cube')
 
-take = r"C:\Users\Henkka\Projects\invrend-fpc\data\reference\neutral/20191106_ilkvil_ML_neutral_take0001_pod2colour_range04_regression"
-newtake = r"C:\Users\Henkka\Projects\invrend-fpc/data/img_undistort/ilkvil/neutral/take0001"
+take = r"C:\Users\Henrik\fpc-diffrend\data\reference\neutral/20191106_ilkvil_ML_neutral_take0001_pod2colour_range04_regression"
+newtake = r"C:\Users\Henrik\fpc-diffrend/data/img_undistort/ilkvil/neutral/take0001"
 if not os.path.isdir(newtake):
     os.mkdir(newtake)
 fullres = os.path.join(newtake, 'fullres')
