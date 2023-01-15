@@ -78,7 +78,7 @@ def get_vertex_coordinates(vtx_pos, idxs):
     :return:
     """
     size = len(idxs)
-    tensor = torch.zeros(size, dtype=torch.float32, device='cuda:1')
+    tensor = torch.zeros(size, dtype=torch.float32, device='cuda')
     # atm I don't think there's any other way to do this... this is slow and not nice
     for i in range(size):
         tensor[i] = vtx_pos[idxs[i]]

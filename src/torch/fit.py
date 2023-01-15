@@ -97,7 +97,7 @@ def render(glctx, mtx, pos, pos_idx, uv, uv_idx, tex, resolution, enable_mip, ma
         colour = dr.texture(tex[None, ...], texc, filter_mode='linear')
 
     colour = dr.antialias(colour, rast_out, pos_clip, pos_idx)
-    colour = torch.where(rast_out[..., 3:] > 0, colour, torch.tensor(45.0 / 255.0).cuda(device='cuda:1'))
+    colour = torch.where(rast_out[..., 3:] > 0, colour, torch.tensor(45.0 / 255.0).cuda(device='cuda'))
     return colour[0]
 
 # -------------------------------------------------------------------------------------------------
@@ -139,18 +139,18 @@ def setup_dataset(localblpath, globalblpath, n_frames, n_vertices_x3, v_basemesh
             localbl[i] = np.subtract(np.asarray(vertices, dtype=np.float32), v_basemesh)
 
         # shapes
-        m_3vb = torch.tensor(localbl.transpose(), dtype=torch.float32, device='cuda:1')
+        m_3vb = torch.tensor(localbl.transpose(), dtype=torch.float32, device='cuda')
         datasets['local'] = m_3vb
 
         # mappings m1
-        m_bf_face = torch.zeros(n_frames, n_frames, dtype=torch.float32, device='cuda:1', requires_grad=True)
+        m_bf_face = torch.zeros(n_frames, n_frames, dtype=torch.float32, device='cuda', requires_grad=True)
         maps['local'] = m_bf_face
 
         # mappings m2
-        m_bf_face_intermediate = torch.zeros(n_meshes, n_frames, dtype=torch.float32, device='cuda:1', requires_grad=True)
+        m_bf_face_intermediate = torch.eye(n_meshes, n_frames, dtype=torch.float32, device='cuda', requires_grad=True)
         maps_intermediate['local'] = m_bf_face_intermediate
 
-    return datasets, maps, maps_intermediate, torch.zeros(n_frames, dtype=torch.float32, device='cuda:1')
+    return datasets, maps, maps_intermediate, torch.zeros(n_frames, dtype=torch.float32, device='cuda')
 
 # -------------------------------------------------------------------------------------------------
 
@@ -202,7 +202,7 @@ def get_vertex_differentials(vtx_pos, vtx_neigh, n_vertices):
     :param n_vertices: number of vertices in mesh
     :return: tensor of vertex differentials
     """
-    diffs = torch.zeros(n_vertices, dtype=torch.float32, device='cuda:1')
+    diffs = torch.zeros(n_vertices, dtype=torch.float32, device='cuda')
     for idx in range(n_vertices):
         # one-vertex differential
         diffs[idx] = vtx_pos[idx] - torch.mean(data.get_vertex_coordinates(vtx_pos, vtx_neigh[idx]))
@@ -271,30 +271,30 @@ def fitTake(max_iter, lr_base, lr_ramp, pose_lr, cam_iter, basemeshpath, localbl
         # initialize tensors
         # basemesh
         basemesh = data.MeshData(basemeshpath)
-        v_base = torch.tensor(basemesh.vertices, dtype=torch.float32, device='cuda:1')
-        pos_idx = torch.tensor(basemesh.faces, dtype=torch.int32, device='cuda:1')
-        uv = torch.tensor(basemesh.uv, dtype=torch.float32, device='cuda:1')
-        uv_idx = torch.tensor(basemesh.fuv, dtype=torch.int32, device='cuda:1')
+        v_base = torch.tensor(basemesh.vertices, dtype=torch.float32, device='cuda')
+        pos_idx = torch.tensor(basemesh.faces, dtype=torch.int32, device='cuda')
+        uv = torch.tensor(basemesh.uv, dtype=torch.float32, device='cuda')
+        uv_idx = torch.tensor(basemesh.fuv, dtype=torch.int32, device='cuda')
         if texpath:
             tex = np.array(Image.open(texpath)) / 255.0
             tex = tex[..., np.newaxis]
             tex = np.flip(tex, 0)
         else:
             tex = np.random.uniform(low=0.0, high=1.0, size=texshape)
-        tex_opt = torch.tensor(tex.copy(), dtype=torch.float32, device='cuda:1', requires_grad=True)
+        tex_opt = torch.tensor(tex.copy(), dtype=torch.float32, device='cuda', requires_grad=True)
 
         # per-camera pose optimization
-        # t_opt = torch.tensor([0.0, 0.0, 0.0], dtype=torch.float32, device='cuda:1', requires_grad=True)
-        t_opt = torch.zeros([9, 3], dtype=torch.float32, device='cuda:1', requires_grad=True)
+        # t_opt = torch.tensor([0.0, 0.0, 0.0], dtype=torch.float32, device='cuda', requires_grad=True)
+        t_opt = torch.zeros([9, 3], dtype=torch.float32, device='cuda', requires_grad=True)
         # initial unit quaternion for rotation optimization
-        # q_opt = torch.tensor([0.0, 0.0, 0.0, 1.0], dtype=torch.float32, device='cuda:1', requires_grad=True)
-        q_opt = torch.zeros([9, 4], dtype=torch.float32, device='cuda:1', requires_grad=False)
+        # q_opt = torch.tensor([0.0, 0.0, 0.0, 1.0], dtype=torch.float32, device='cuda', requires_grad=True)
+        q_opt = torch.zeros([9, 4], dtype=torch.float32, device='cuda', requires_grad=False)
         q_opt[:, 3] = 1.0
         q_opt.requires_grad = True
-        cam_idx_tensor = torch.zeros(9, dtype=torch.float32, device='cuda:1', requires_grad=False)
+        cam_idx_tensor = torch.zeros(9, dtype=torch.float32, device='cuda', requires_grad=False)
 
         # final shapes
-        result = torch.empty(size=(n_frames, basemesh.vertices.shape[0]), dtype=torch.float32, device='cuda:1')
+        result = torch.empty(size=(n_frames, basemesh.vertices.shape[0]), dtype=torch.float32, device='cuda')
 
         # blendshapes and mappings
         n_vertices_x3 = v_base.shape[0]
@@ -303,13 +303,14 @@ def fitTake(max_iter, lr_base, lr_ramp, pose_lr, cam_iter, basemeshpath, localbl
 
         # context and optimizer
         print("Setting up RasterizeGLContext and optimizer...")
-        glctx = dr.RasterizeGLContext(device='cuda:1')
+        glctx = dr.RasterizeGLContext(device='cuda')
         # ================================================================
         # UPDATE PARAMETERS HERE
-        optimizer = torch.optim.Adam([{"params": maps['local']},
-                                      {"params": t_opt, 'lr': 10e-4 * 0.5},
-                                      {"params": q_opt, 'lr': 10e-4 * 0.5},
-                                      {"params": tex_opt, 'lr': 10e-4 * 0.5, 'weight_decay': 0.0}],
+        optimizer = torch.optim.Adam([{"params": maps['local'], 'lr': lr_base, 'weight_decay': 10e-1},
+                                      {"params": maps_intermediate['local'], 'lr': lr_base, 'weight_decay': 10e-1 },
+                                      {"params": t_opt, 'lr': 10e-4 * 0.1},
+                                      {"params": q_opt, 'lr': 10e-4 * 0.1},
+                                      {"params": tex_opt, 'lr': 10e-5 * 0.5, 'weight_decay': 0.0}],
                                      lr=lr_base, weight_decay=10e-1)
         scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer,
                                                       lr_lambda=lambda x: lr_ramp ** (
@@ -338,13 +339,13 @@ def fitTake(max_iter, lr_base, lr_ramp, pose_lr, cam_iter, basemeshpath, localbl
             # reference image to render against
             camdir = os.path.join(imdir, calib_lookup[cam_idx]['cam'])
             img = np.array(Image.open(os.path.join(camdir, f"{calib_lookup[cam_idx]['cam']}_{frame_idx:02d}.tif")))
-            ref = torch.tensor(np.flip(img, 0).copy(), dtype=torch.float32, device='cuda:1')
+            ref = torch.tensor(np.flip(img, 0).copy(), dtype=torch.float32, device='cuda')
             ref = ref.reshape((ref.shape[0], ref.shape[1], 1))
-            ref_norm = lrn(ref.permute(0, 2, 1))
-            ref_norm = ref_norm.permute(0, 2, 1)
-            smoothing = utils.GaussianSmoothing(1, 32, 1)
-            smoothing = smoothing.to('cuda:1')
-            ref_blur = smoothing(torch.reshape(ref_norm, (1, ref_norm.shape[2], ref_norm.shape[0], ref_norm.shape[1])))
+            # ref_norm = lrn(ref.permute(0, 2, 1))
+            # ref_norm = ref_norm.permute(0, 2, 1)
+            # smoothing = utils.GaussianSmoothing(1, 32, 1)
+            # smoothing = smoothing.to('cuda')
+            # ref_blur = smoothing(torch.reshape(ref_norm, (1, ref_norm.shape[2], ref_norm.shape[0], ref_norm.shape[1])))
 
             # set one-hot frame index
             v_f[frame_idx] = 1.0
@@ -353,11 +354,11 @@ def fitTake(max_iter, lr_base, lr_ramp, pose_lr, cam_iter, basemeshpath, localbl
             # modelview and projection
             # lens distortion currently handled as preprocess in reference images
             projection = camera.intrinsic_to_projection(calib_lookup[cam_idx]['intr'])
-            proj = torch.from_numpy(projection).cuda(device='cuda:1')
+            proj = torch.from_numpy(projection).cuda(device='cuda')
             modelview = camera.extrinsic_to_modelview(calib_lookup[cam_idx]['rot'],
                                                       calib_lookup[cam_idx]['trans_calib'])
-            trans = torch.tensor(camera.translate(0.0, 0.0, 0.0), dtype=torch.float32, device='cuda:1')
-            t_mv = torch.matmul(torch.from_numpy(modelview).cuda(device='cuda:1'), trans)
+            trans = torch.tensor(camera.translate(0.0, 0.0, 0.0), dtype=torch.float32, device='cuda')
+            t_mv = torch.matmul(torch.from_numpy(modelview).cuda(device='cuda'), trans)
             rigid_trans = camera.rigid_grad(torch.matmul(cam_idx_tensor, t_opt) * 0.05,
                               roma.unitquat_to_rotmat(torch.matmul(cam_idx_tensor, q_opt)))
             tr = torch.matmul(rigid_trans, t_mv)
@@ -382,17 +383,17 @@ def fitTake(max_iter, lr_base, lr_ramp, pose_lr, cam_iter, basemeshpath, localbl
             # local contrast (response) normalization over channels to account for
             # lighting changes between reference and rendered image
             # torch local response norm needs channel dimension to be in dim 1
-            colour_norm = lrn(colour.permute(0, 2, 1))
+            # colour_norm = lrn(colour.permute(0, 2, 1))
             # permute back original shape from lrn shape requirements (need to have channel back in dim 2)
-            colour_norm = colour_norm.permute(0, 2, 1)
+            # colour_norm = colour_norm.permute(0, 2, 1)
             # blur before calculating pixel space loss using gaussian kernel of size 32
             # more tractable optimization landscape
             # built-in gaussian not available for torch tensors since we can't use the right torch3d version
-            colour_blur = smoothing(
-                torch.reshape(colour_norm, (1, colour_norm.shape[2], colour_norm.shape[0], colour_norm.shape[1])))
+            # colour_blur = smoothing(
+                # torch.reshape(colour_norm, (1, colour_norm.shape[2], colour_norm.shape[0], colour_norm.shape[1])))
 
             # L2 pixel loss, *255 to channels from opengl. Second loss term to penalize large translations
-            loss = torch.mean((ref_blur - colour_blur * 255) ** 2)  # + torch.sqrt(torch.sum(t_opt))
+            loss = torch.mean((ref - colour * 255) ** 2)  # + torch.sqrt(torch.sum(t_opt))
             optimizer.zero_grad()
             loss.backward()
             optimizer.step()
@@ -411,13 +412,11 @@ def fitTake(max_iter, lr_base, lr_ramp, pose_lr, cam_iter, basemeshpath, localbl
             display_image = (display_interval and (i % display_interval == 0)) or i == max_iter
             save_mp4 = (mp4_interval and (i % mp4_interval == 0) and i)
             if display_image or save_mp4:
-                img_ref = torch.reshape(ref_blur,
-                                        (ref_blur.shape[2], ref_blur.shape[3], ref_blur.shape[1])).cpu().numpy()
-                # img_ref = ref.cpu().numpy()
+                # img_ref = torch.reshape(ref_blur, (ref_blur.shape[2], ref_blur.shape[3], ref_blur.shape[1])).cpu().numpy()
+                img_ref = ref.cpu().numpy()
                 img_ref = np.flip(np.array(img_ref.copy(), dtype=np.float32) / 255, 0)
-                img_col = np.flip(torch.reshape(colour_blur, (
-                colour_blur.shape[2], colour_blur.shape[3], colour_blur.shape[1])).cpu().detach().numpy(), 0)
-                # img_col = np.flip(colour.cpu().detach().numpy(), 0)
+                # img_col = np.flip(torch.reshape(colour_blur, (colour_blur.shape[2], colour_blur.shape[3], colour_blur.shape[1])).cpu().detach().numpy(), 0)
+                img_col = np.flip(colour.cpu().detach().numpy(), 0)
                 result_image = utils.make_img(np.stack([img_ref, img_col]))
                 if display_image:
                     utils.display_image(result_image)

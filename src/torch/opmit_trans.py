@@ -30,47 +30,47 @@ def simple_render():
     dist = np.asarray(calib['distortion'], dtype=np.float32)
     rot = np.asarray(calib['rotation'], dtype=np.float32)
     trans = np.asarray(calib['translation'], dtype=np.float32)
-    y_opt = torch.tensor([0.0], dtype=torch.float32, device='cuda:1', requires_grad=True)
-    fx_opt = torch.tensor([intr[0,0]], dtype=torch.float32, device='cuda:1', requires_grad=True)
-    fy_opt = torch.tensor([intr[1,1]], dtype=torch.float32, device='cuda:1', requires_grad=True)
+    y_opt = torch.tensor([0.0], dtype=torch.float32, device='cuda', requires_grad=True)
+    fx_opt = torch.tensor([intr[0,0]], dtype=torch.float32, device='cuda', requires_grad=True)
+    fy_opt = torch.tensor([intr[1,1]], dtype=torch.float32, device='cuda', requires_grad=True)
 
     rubiks = data.MeshData(r"C:\Users\Henrik\fpc-diffrend\data\basemesh.obj")
     # rubiks = data.MeshData(r"C:\Users\Henrik\fpc-diffrend\data\cube\rubiks.obj")
 
-    pos = torch.tensor(rubiks.vertices, dtype=torch.float32, device='cuda:1')
-    tri = torch.tensor(rubiks.faces, dtype=torch.int32, device='cuda:1')
-    uv = torch.tensor(rubiks.uv, dtype=torch.float32, device='cuda:1')
-    uv_idx = torch.tensor(rubiks.fuv, dtype=torch.int32, device='cuda:1')
+    pos = torch.tensor(rubiks.vertices, dtype=torch.float32, device='cuda')
+    tri = torch.tensor(rubiks.faces, dtype=torch.int32, device='cuda')
+    uv = torch.tensor(rubiks.uv, dtype=torch.float32, device='cuda')
+    uv_idx = torch.tensor(rubiks.fuv, dtype=torch.int32, device='cuda')
     # texture = np.array(Image.open(r"C:\Users\Henrik\fpc-diffrend\data\cube\rubiks.png"))/255.0
     texture = np.array(Image.open(r"C:\Users\Henrik\fpc-diffrend\data\ilkvil_tex_grid_bright.png")) / 255.0
-    tex = torch.tensor(texture, dtype=torch.float32, device='cuda:1')
+    tex = torch.tensor(texture, dtype=torch.float32, device='cuda')
     tex = tex.reshape((1600, 1600, 1))
 
-    proj = torch.tensor(camera.intrinsic_to_projection(intr), dtype=torch.float32, device='cuda:1')
-    # proj = torch.tensor(camera.default_projection(), dtype=torch.float32, device='cuda:1')
-    mv = torch.tensor(camera.extrinsic_to_modelview(rot, trans), dtype=torch.float32, device='cuda:1')
-    # mv = torch.tensor(camera.default_modelview(), dtype=torch.float32, device='cuda:1')
+    proj = torch.tensor(camera.intrinsic_to_projection(intr), dtype=torch.float32, device='cuda')
+    # proj = torch.tensor(camera.default_projection(), dtype=torch.float32, device='cuda')
+    mv = torch.tensor(camera.extrinsic_to_modelview(rot, trans), dtype=torch.float32, device='cuda')
+    # mv = torch.tensor(camera.default_modelview(), dtype=torch.float32, device='cuda')
 
     # reference image to render against
     img = np.array(Image.open(os.path.join(camdir, frame)))/255
-    ref = torch.from_numpy(img).cuda(device='cuda:1').reshape((1600, 1200, 1))
-    # ref = torch.from_numpy(np.flip(img, 0).copy()).cuda(device='cuda:1').reshape((1600, 1200, 1))
+    ref = torch.from_numpy(img).cuda(device='cuda').reshape((1600, 1200, 1))
+    # ref = torch.from_numpy(np.flip(img, 0).copy()).cuda(device='cuda').reshape((1600, 1200, 1))
 
-    glctx = dr.RasterizeGLContext(device='cuda:1')
+    glctx = dr.RasterizeGLContext(device='cuda')
     optimizer = torch.optim.Adam([y_opt, fx_opt, fy_opt], lr=1e-1)
     scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer, lr_lambda=lambda x: max(0.01, 10 ** (-x * 0.0005)))
     bestloss = 1000000
     bestvals = {}
 
     for i in range(5000):
-        transvec = torch.zeros(3, dtype=torch.float32, device='cuda:1')
+        transvec = torch.zeros(3, dtype=torch.float32, device='cuda')
         transvec[1] = y_opt
         tr = torch.matmul(camera.translate_tensor(transvec),
-                          torch.tensor(camera.rotate_x(0.0), dtype=torch.float32, device='cuda:1'))
-        # tr = torch.matmul(tr, torch.tensor(camera.rotate_y(-0.6), dtype=torch.float32, device='cuda:1'))
+                          torch.tensor(camera.rotate_x(0.0), dtype=torch.float32, device='cuda'))
+        # tr = torch.matmul(tr, torch.tensor(camera.rotate_y(-0.6), dtype=torch.float32, device='cuda'))
         tp = torch.matmul(mv, tr)
         pos_split = torch.reshape(pos, (pos.shape[0] // 3, 3))
-        proj = torch.tensor(camera.intrinsic_to_projection(intr), dtype=torch.float32, device='cuda:1')
+        proj = torch.tensor(camera.intrinsic_to_projection(intr), dtype=torch.float32, device='cuda')
         proj[(0), (0)] = fx_opt / intr[0,2]
         proj[(1), (1)] = fy_opt / intr[1,2]
         mvp = torch.matmul(proj, tp)
@@ -82,7 +82,7 @@ def simple_render():
         texc, _ = dr.interpolate(uv[None, ...], rast, uv_idx)
         colour = dr.texture(tex[None, ...], texc, filter_mode='linear')
         colour = dr.antialias(colour, rast, pos_clip, tri)
-        colour = torch.where(rast[..., 3:] > 0, colour, torch.tensor(0.0).cuda(device='cuda:1'))[0]
+        colour = torch.where(rast[..., 3:] > 0, colour, torch.tensor(0.0).cuda(device='cuda'))[0]
 
         # Compute loss and train.
         # geom_loss = torch.mean(torch.sum((torch.abs(vtx_pos_opt) - .5) ** 2, dim=1) ** 0.5)

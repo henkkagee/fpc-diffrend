@@ -59,7 +59,7 @@ def render(glctx, mtx, pos, pos_idx, uv, uv_idx, tex, resolution: tuple):
     colour = dr.texture(tex[None, ...], texc, filter_mode='linear')
     colour = dr.antialias(colour, rast_out, pos_clip, pos_idx)
     # colour = colour * torch.clamp(rast_out[..., -1:], 35.0/255.0, 36.0/255.0)
-    colour = torch.where(rast_out[..., 3:] > 0, colour, torch.tensor(0.0).cuda(device='cuda:1'))
+    colour = torch.where(rast_out[..., 3:] > 0, colour, torch.tensor(0.0).cuda(device='cuda'))
     return colour[0]
 
 # -------------------------------------------------------------------------------------------------
@@ -92,15 +92,15 @@ def rot_trans_matrices(rot_tensor, t_tensor):
     """
     rotmat = roma.rotvec_to_rotmat(rot_tensor)
     rot_opt = torch.stack([
-        torch.cat([rotmat[0], torch.zeros(1, device='cuda:1')]),
-        torch.cat([rotmat[1], torch.zeros(1, device='cuda:1')]),
-        torch.cat([rotmat[2], torch.zeros(1, device='cuda:1')]),
-        torch.cat([torch.zeros(3, device='cuda:1'), torch.ones(1, device='cuda:1')])]).reshape(4, 4)
+        torch.cat([rotmat[0], torch.zeros(1, device='cuda')]),
+        torch.cat([rotmat[1], torch.zeros(1, device='cuda')]),
+        torch.cat([rotmat[2], torch.zeros(1, device='cuda')]),
+        torch.cat([torch.zeros(3, device='cuda'), torch.ones(1, device='cuda')])]).reshape(4, 4)
     t_opt = torch.stack([
-        torch.tensor([1.0, 0.0, 0.0, 0.0], dtype=torch.float32, device='cuda:1'),
-        torch.tensor([0.0, 1.0, 0.0, 0.0], dtype=torch.float32, device='cuda:1'),
-        torch.tensor([0.0, 0.0, 1.0, 0.0], dtype=torch.float32, device='cuda:1'),
-        torch.cat([t_tensor, torch.ones(1, dtype=torch.float32, device='cuda:1')])]).reshape(4, 4).t()
+        torch.tensor([1.0, 0.0, 0.0, 0.0], dtype=torch.float32, device='cuda'),
+        torch.tensor([0.0, 1.0, 0.0, 0.0], dtype=torch.float32, device='cuda'),
+        torch.tensor([0.0, 0.0, 1.0, 0.0], dtype=torch.float32, device='cuda'),
+        torch.cat([t_tensor, torch.ones(1, dtype=torch.float32, device='cuda')])]).reshape(4, 4).t()
     return rot_opt, t_opt
 
 # -------------------------------------------------------------------------------------------------
@@ -155,17 +155,17 @@ def fit_cube(max_iter          = 5000,
 
     # object data
     rubiks = data.MeshData(basemeshpath)
-    vtxp = torch.tensor(rubiks.vertices, dtype=torch.float32, device='cuda:1')
-    pos_idx = torch.tensor(rubiks.faces, dtype=torch.int32, device='cuda:1')
-    uv_idx = torch.tensor(rubiks.fuv, dtype=torch.int32, device='cuda:1')
-    uv = torch.tensor(rubiks.uv, dtype=torch.float32, device='cuda:1')
+    vtxp = torch.tensor(rubiks.vertices, dtype=torch.float32, device='cuda')
+    pos_idx = torch.tensor(rubiks.faces, dtype=torch.int32, device='cuda')
+    uv_idx = torch.tensor(rubiks.fuv, dtype=torch.int32, device='cuda')
+    uv = torch.tensor(rubiks.uv, dtype=torch.float32, device='cuda')
     texture = np.array(Image.open(texpath))/255.0
-    tex = torch.tensor(texture, dtype=torch.float32, device='cuda:1')
+    tex = torch.tensor(texture, dtype=torch.float32, device='cuda')
 
     # learn euler angles, translation and scale
-    rotvec = torch.ones(3, dtype=torch.float32, device='cuda:1', requires_grad=True)
-    tvec = torch.ones(3, dtype=torch.float32, device='cuda:1', requires_grad=True)
-    scale = torch.tensor(1, dtype=torch.float32, device='cuda:1', requires_grad=True)
+    rotvec = torch.ones(3, dtype=torch.float32, device='cuda', requires_grad=True)
+    tvec = torch.ones(3, dtype=torch.float32, device='cuda', requires_grad=True)
+    scale = torch.tensor(1, dtype=torch.float32, device='cuda', requires_grad=True)
 
     # context
     glctx = dr.RasterizeGLContext()
@@ -188,13 +188,13 @@ def fit_cube(max_iter          = 5000,
         for frame in frames:
             # reference image to render against
             img = np.array(Image.open(os.path.join(camdir, frame)))
-            ref = torch.from_numpy(np.flip(img, 0).copy()).cuda(device='cuda:1')
-            # ref = torch.from_numpy(img).cuda(device='cuda:1')
+            ref = torch.from_numpy(np.flip(img, 0).copy()).cuda(device='cuda')
+            # ref = torch.from_numpy(img).cuda(device='cuda')
 
             # lens distortion handled as preprocess in reference images
-            projection = torch.tensor(camera.intrinsic_to_projection(intr), dtype=torch.float32, device='cuda:1')
-            # projection = torch.tensor(camera.default_projection(), dtype=torch.float32, device='cuda:1')
-            modelview = torch.tensor(camera.extrinsic_to_modelview(rot, trans), dtype=torch.float32, device='cuda:1')
+            projection = torch.tensor(camera.intrinsic_to_projection(intr), dtype=torch.float32, device='cuda')
+            # projection = torch.tensor(camera.default_projection(), dtype=torch.float32, device='cuda')
+            modelview = torch.tensor(camera.extrinsic_to_modelview(rot, trans), dtype=torch.float32, device='cuda')
 
             for it in range(max_iter + 1):
                 # rotation/translation matrix for offsetting object so that it matches the image

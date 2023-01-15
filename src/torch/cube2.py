@@ -119,8 +119,8 @@ def q_to_mtx(q):
     r1 = torch.stack([2.0*q[0]*q[1] + 2.0*q[2]*q[3], 1.0 - 2.0*q[0]**2 - 2.0*q[2]**2, 2.0*q[1]*q[2] - 2.0*q[0]*q[3]])
     r2 = torch.stack([2.0*q[0]*q[2] - 2.0*q[1]*q[3], 2.0*q[1]*q[2] + 2.0*q[0]*q[3], 1.0 - 2.0*q[0]**2 - 2.0*q[1]**2])
     rr = torch.transpose(torch.stack([r0, r1, r2]), 1, 0)
-    rr = torch.cat([rr, torch.tensor([[0], [0], [0]], dtype=torch.float32).cuda(device='cuda:1')], dim=1) # Pad right column.
-    rr = torch.cat([rr, torch.tensor([[0, 0, 0, 1]], dtype=torch.float32).cuda(device='cuda:1')], dim=0)  # Pad bottom row.
+    rr = torch.cat([rr, torch.tensor([[0], [0], [0]], dtype=torch.float32).cuda(device='cuda')], dim=1) # Pad right column.
+    rr = torch.cat([rr, torch.tensor([[0, 0, 0, 1]], dtype=torch.float32).cuda(device='cuda')], dim=0)  # Pad bottom row.
     return rr
 
 # ----------------------------------------------------------------------------
@@ -180,16 +180,16 @@ def fit_pose(max_iter           = 10000,
 
     # object data
     rubiks = data.MeshData(basemeshpath)
-    vtx_pos = torch.tensor(rubiks.vertices, dtype=torch.float32, device='cuda:1')
-    pos_idx = torch.tensor(rubiks.faces, dtype=torch.int32, device='cuda:1')
-    uv_idx = torch.tensor(rubiks.fuv, dtype=torch.int32, device='cuda:1')
-    uv = torch.tensor(rubiks.uv, dtype=torch.float32, device='cuda:1')
+    vtx_pos = torch.tensor(rubiks.vertices, dtype=torch.float32, device='cuda')
+    pos_idx = torch.tensor(rubiks.faces, dtype=torch.int32, device='cuda')
+    uv_idx = torch.tensor(rubiks.fuv, dtype=torch.int32, device='cuda')
+    uv = torch.tensor(rubiks.uv, dtype=torch.float32, device='cuda')
     texture = np.array(Image.open(texpath)) / 255.0
-    tex = torch.tensor(texture, dtype=torch.float32, device='cuda:1')
+    tex = torch.tensor(texture, dtype=torch.float32, device='cuda')
 
     print("Mesh has %d triangles and %d vertices." % (pos_idx.shape[0], vtx_pos.shape[0]))
     pose_init = q_rnd()
-    pose_opt = torch.tensor(pose_init / np.sum(pose_init ** 2) ** 0.5, dtype=torch.float32, device='cuda:1',
+    pose_opt = torch.tensor(pose_init / np.sum(pose_init ** 2) ** 0.5, dtype=torch.float32, device='cuda',
                             requires_grad=True)
     vtx_pos_split = torch.reshape(vtx_pos, (vtx_pos.shape[0] // 3, 3))
 
@@ -217,13 +217,13 @@ def fit_pose(max_iter           = 10000,
             # reference image to render against
             img = np.array(Image.open(os.path.join(camdir, frame)))
             img = cv2.undistort(img, intr, dist)
-            # ref = torch.from_numpy(np.flip(img, 0).copy()).cuda(device='cuda:1')
-            ref = torch.from_numpy(img).cuda(device='cuda:1')
+            # ref = torch.from_numpy(np.flip(img, 0).copy()).cuda(device='cuda')
+            ref = torch.from_numpy(img).cuda(device='cuda')
 
             # lens distortion handled as preprocess in reference images
-            projection = torch.tensor(camera.intrinsic_to_projection(intr), dtype=torch.float32, device='cuda:1')
-            # projection = torch.tensor(camera.default_projection(), dtype=torch.float32, device='cuda:1')
-            modelview = torch.tensor(camera.extrinsic_to_modelview(rot, trans), dtype=torch.float32, device='cuda:1')
+            projection = torch.tensor(camera.intrinsic_to_projection(intr), dtype=torch.float32, device='cuda')
+            # projection = torch.tensor(camera.default_projection(), dtype=torch.float32, device='cuda')
+            modelview = torch.tensor(camera.extrinsic_to_modelview(rot, trans), dtype=torch.float32, device='cuda')
 
             # Render.
             for it in range(max_iter + 1):
