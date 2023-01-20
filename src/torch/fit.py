@@ -11,6 +11,8 @@ import nvdiffrast.torch as dr
 from PIL import Image
 import roma as roma
 import imageio
+import pytorch3d.structures.meshes as meshes
+import pytorch3d.loss.mesh_laplacian_smoothing as laplacian
 
 # local
 import src.torch.data as data
@@ -272,6 +274,7 @@ def fitTake(max_iter, lr_base, lr_ramp, pose_lr, cam_iter, basemeshpath, localbl
         # basemesh
         basemesh = data.MeshData(basemeshpath)
         v_base = torch.tensor(basemesh.vertices, dtype=torch.float32, device='cuda')
+        v_base_split = torch.reshape(v_base, (v_base.shape[0] // 3, 3))
         pos_idx = torch.tensor(basemesh.faces, dtype=torch.int32, device='cuda')
         uv = torch.tensor(basemesh.uv, dtype=torch.float32, device='cuda')
         uv_idx = torch.tensor(basemesh.fuv, dtype=torch.int32, device='cuda')
@@ -393,7 +396,10 @@ def fitTake(max_iter, lr_base, lr_ramp, pose_lr, cam_iter, basemeshpath, localbl
                 # torch.reshape(colour_norm, (1, colour_norm.shape[2], colour_norm.shape[0], colour_norm.shape[1])))
 
             # L2 pixel loss, *255 to channels from opengl. Second loss term to penalize large translations
-            loss = torch.mean((ref - colour * 255) ** 2)  # + torch.sqrt(torch.sum(t_opt))
+            # mesh laplacian term through pytorch3d
+            print(f"{v_base.shape} - {vtx_pos.shape}")
+            loss_mesh = meshes.Meshes(verts=[vtx_pos_split], faces=[pos_idx]).cuda()
+            loss = torch.mean((ref - colour * 255) ** 2) + (laplacian(loss_mesh)) # + torch.sqrt(torch.sum(t_opt))
             optimizer.zero_grad()
             loss.backward()
             optimizer.step()
