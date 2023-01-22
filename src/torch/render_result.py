@@ -45,7 +45,7 @@ def render(glctx, mtx, pos, pos_idx, uv, uv_idx, tex, resolution):
 # -------------------------------------------------------------------------------------------------
 
 # Get objs
-DIR = r"C:\Users\Henrik\fpc-diffrend\data\out\dialogue_sc1_t3_short\result"
+DIR = r"C:\Users\Henrik\fpc-diffrend\data\out\20201022_iv_s1_t3_p2col_r1\result"
 objs = os.listdir(DIR)
 texpath = os.path.join(DIR, "ilkka_villi_anchor_greyscale_fix.png")
 
@@ -78,6 +78,8 @@ glctx = dr.RasterizeGLContext(device='cuda')
 writer = imageio.get_writer(f'{DIR}/result_vid_tex.mp4', mode='I', fps=30, codec='libx264', bitrate='16M')
 
 for i, obj in enumerate(objs):
+    if "basemesh" in obj:
+        continue
     # get vertices
     vertices = []
     with open(os.path.join(DIR, obj), 'r') as f:

@@ -5,14 +5,15 @@ import random
 
 # 3rd party
 import numpy as np
-import torch
-from torch.nn.functional import conv2d
-import nvdiffrast.torch as dr
 from PIL import Image
 import roma as roma
 import imageio
+import torch
+import nvdiffrast.torch as dr
+import torchvision.transforms as transforms
 import pytorch3d.structures.meshes as meshes
 import pytorch3d.loss.mesh_laplacian_smoothing as laplacian
+import pytorch3d.loss.mesh_edge_loss as mel
 
 # local
 import src.torch.data as data
@@ -36,10 +37,28 @@ def assertNumFrames(cams, imdir):
         frames = os.listdir(camdir)
         n_frames.append(len(frames))
     assert not any([x != n_frames[0] for x in n_frames]), "All cameras do not have the same number of frames!"
-    return n_frames[0]
+    return (n_frames[0], 2) if n_frames[0] < 100 else (n_frames[0], 3)
 
 # -------------------------------------------------------------------------------------------------
 
+def blend_free(v_base, m1, m2, m3, frames):
+    """
+    Get blended vertex positions from decomposed matrix of vertex positions
+    :param v_base: Base mesh vertex positions of shape [3*v], (x,y,z,x,...)
+    :param m1: Mapping from frames to learned vertex deltas
+    :param m2: Mapping from frames to learned vertex deltas
+    :param m3: Learned basis of vertex deltas
+    :param frames: One-hot vector of frame index, with value at frame i being 1.
+    :return: Blended mesh vertex positions of shape [3*v], (x,y,z,x,...)
+    """
+
+    mapped = torch.matmul(m1, frames)
+    basis = torch.matmul(m2, mapped)
+    prod = torch.matmul(m3, basis)
+    vtx_pos = torch.add(v_base, prod)
+    return vtx_pos
+
+# -------------------------------------------------------------------------------------------------
 
 def blend(v_base, maps, maps_intermediate, dataset, frames):
     """
@@ -104,6 +123,22 @@ def render(glctx, mtx, pos, pos_idx, uv, uv_idx, tex, resolution, enable_mip, ma
 
 # -------------------------------------------------------------------------------------------------
 
+def setup_dataset_free(n_frames, n_vertices_x3):
+    """
+    Set up dataset of vertex matrix decomposition with v_i = v_base + m3*m2*m1*frames.
+    m3 can be seen as the learned basis for mesh deltas, m1 and m2 as mapping from frame index to this
+    basis. Finding the geometry in optimization thus corresponds to finding values for m1, m2 and m3.
+    :return:
+    """
+
+    m1 = torch.eye(n_frames, dtype=torch.float32, device='cuda', requires_grad=True)
+    m2 = torch.eye(n_frames, dtype=torch.float32, device='cuda', requires_grad=True)
+    m3 = torch.zeros((n_vertices_x3, n_frames), dtype=torch.float32, device='cuda', requires_grad=True)
+
+    return m1, m2, m3, torch.zeros(n_frames, dtype=torch.float32, device='cuda')
+
+
+# -------------------------------------------------------------------------------------------------
 
 def setup_dataset(localblpath, globalblpath, n_frames, n_vertices_x3, v_basemesh):
     """
@@ -227,7 +262,7 @@ def laplacian_regularization(base_vtx_differential, vtx_pos, vertex_neighbours, 
 
 # -------------------------------------------------------------------------------------------------
 
-def fitTake(max_iter, lr_base, lr_ramp, pose_lr, cam_iter, basemeshpath, localblpath, globalblpath, display_interval,
+def fitTake(max_iter, lr_base, lr_ramp, basemeshpath, localblpath, globalblpath, display_interval,
             log_interval, imdir, calibpath, enable_mip, max_mip_level, texshape, out_dir, resolution,
             mp4_interval, texpath="", maskpath=""):
     """
@@ -264,7 +299,7 @@ def fitTake(max_iter, lr_base, lr_ramp, pose_lr, cam_iter, basemeshpath, localbl
 
     try:
         cams = os.listdir(imdir)
-        n_frames = assertNumFrames(cams, imdir)
+        n_frames, digits = assertNumFrames(cams, imdir)
 
         # calibrations
         with open(calibpath) as json_file:
@@ -276,6 +311,7 @@ def fitTake(max_iter, lr_base, lr_ramp, pose_lr, cam_iter, basemeshpath, localbl
         v_base = torch.tensor(basemesh.vertices, dtype=torch.float32, device='cuda')
         v_base_split = torch.reshape(v_base, (v_base.shape[0] // 3, 3))
         pos_idx = torch.tensor(basemesh.faces, dtype=torch.int32, device='cuda')
+        v_base_loss_mesh = meshes.Meshes(verts=[v_base_split], faces=[pos_idx]).cuda()
         uv = torch.tensor(basemesh.uv, dtype=torch.float32, device='cuda')
         uv_idx = torch.tensor(basemesh.fuv, dtype=torch.int32, device='cuda')
         if texpath:
@@ -301,23 +337,28 @@ def fitTake(max_iter, lr_base, lr_ramp, pose_lr, cam_iter, basemeshpath, localbl
 
         # blendshapes and mappings
         n_vertices_x3 = v_base.shape[0]
-        datasets, maps, maps_intermediate, v_f = setup_dataset(localblpath, globalblpath, n_frames, n_vertices_x3,
-                                                               basemesh.vertices)
+        # datasets, maps, maps_intermediate, v_f = setup_dataset(localblpath, globalblpath, n_frames, n_vertices_x3, basemesh.vertices)
+        m1, m2, m3, v_f = setup_dataset_free(n_frames, n_vertices_x3)
 
         # context and optimizer
         print("Setting up RasterizeGLContext and optimizer...")
         glctx = dr.RasterizeGLContext(device='cuda')
         # ================================================================
         # UPDATE PARAMETERS HERE
-        optimizer = torch.optim.Adam([{"params": maps['local'], 'lr': lr_base, 'weight_decay': 10e-1},
+        """optimizer = torch.optim.Adam([{"params": maps['local'], 'lr': lr_base, 'weight_decay': 10e-1},
                                       {"params": maps_intermediate['local'], 'lr': lr_base, 'weight_decay': 10e-1 },
                                       {"params": t_opt, 'lr': 10e-4 * 0.1},
                                       {"params": q_opt, 'lr': 10e-4 * 0.1},
                                       {"params": tex_opt, 'lr': 10e-5 * 0.5, 'weight_decay': 0.0}],
-                                     lr=lr_base, weight_decay=10e-1)
+                                     lr=lr_base, weight_decay=10e-1)"""
+        optimizer = torch.optim.Adam([{"params": m1, 'lr': lr_base},
+                                      {"params": m2, 'lr': lr_base},
+                                      {"params": m3, 'lr': lr_base},
+                                      {"params": tex_opt, 'lr': 10e-5}], lr=lr_base)
         scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer,
                                                       lr_lambda=lambda x: lr_ramp ** (
                                                               float(x) / float(max_iter)))
+        blurrer = transforms.GaussianBlur(kernel_size=(31, 31))
         # ================================================================
 
         # local response norm for image contrast normalization
@@ -341,7 +382,7 @@ def fitTake(max_iter, lr_base, lr_ramp, pose_lr, cam_iter, basemeshpath, localbl
 
             # reference image to render against
             camdir = os.path.join(imdir, calib_lookup[cam_idx]['cam'])
-            img = np.array(Image.open(os.path.join(camdir, f"{calib_lookup[cam_idx]['cam']}_{frame_idx:02d}.tif")))
+            img = np.array(Image.open(os.path.join(camdir, f"{calib_lookup[cam_idx]['cam']}_{frame_idx:0{digits}d}.tif")))
             ref = torch.tensor(np.flip(img, 0).copy(), dtype=torch.float32, device='cuda')
             ref = ref.reshape((ref.shape[0], ref.shape[1], 1))
             # ref_norm = lrn(ref.permute(0, 2, 1))
@@ -349,6 +390,7 @@ def fitTake(max_iter, lr_base, lr_ramp, pose_lr, cam_iter, basemeshpath, localbl
             # smoothing = utils.GaussianSmoothing(1, 32, 1)
             # smoothing = smoothing.to('cuda')
             # ref_blur = smoothing(torch.reshape(ref_norm, (1, ref_norm.shape[2], ref_norm.shape[0], ref_norm.shape[1])))
+            # ref_blur = blurrer(torch.reshape(ref, (1, 1600, 1200)))
 
             # set one-hot frame index
             v_f[frame_idx] = 1.0
@@ -368,7 +410,8 @@ def fitTake(max_iter, lr_base, lr_ramp, pose_lr, cam_iter, basemeshpath, localbl
             mvp = torch.matmul(proj, tr)
 
             # get blended vertex positions according to eq.
-            vtx_pos = blend(v_base, maps, maps_intermediate, datasets, v_f)
+            # vtx_pos = blend(v_base, maps, maps_intermediate, datasets, v_f)
+            vtx_pos = blend_free(v_base, m1, m2, m3, v_f)
             # split [n_vertices * 3] to [n_vertices, 3] as a view of the original tensor
             vtx_pos_split = torch.reshape(vtx_pos, (vtx_pos.shape[0] // 3, 3))
 
@@ -394,12 +437,19 @@ def fitTake(max_iter, lr_base, lr_ramp, pose_lr, cam_iter, basemeshpath, localbl
             # built-in gaussian not available for torch tensors since we can't use the right torch3d version
             # colour_blur = smoothing(
                 # torch.reshape(colour_norm, (1, colour_norm.shape[2], colour_norm.shape[0], colour_norm.shape[1])))
+            # colour_blur = blurrer(torch.reshape(colour, (1, 1600, 1200)))
 
             # L2 pixel loss, *255 to channels from opengl. Second loss term to penalize large translations
             # mesh laplacian term through pytorch3d
-            print(f"{v_base.shape} - {vtx_pos.shape}")
             loss_mesh = meshes.Meshes(verts=[vtx_pos_split], faces=[pos_idx]).cuda()
-            loss = torch.mean((ref - colour * 255) ** 2) + (laplacian(loss_mesh)) # + torch.sqrt(torch.sum(t_opt))
+            # loss = torch.mean((ref - colour * 255) ** 2) + (10*(abs(laplacian(loss_mesh) - laplacian(v_base_loss_mesh)))**2)   # + torch.sqrt(torch.sum(t_opt))
+            loss = torch.mean((ref - colour*255) ** 2)\
+                    + 10000*(laplacian(loss_mesh) - laplacian(v_base_loss_mesh))**3
+                    # + 100*mel(loss_mesh, 0.1)
+            with torch.no_grad():
+                if not i % 1000:
+                    print(f"LAPLACIAN : {10000*(laplacian(loss_mesh) - laplacian(v_base_loss_mesh))**3} ===== ")
+                          # f"MESH EDGE : {10*mel(loss_mesh, 0.1)}")
             optimizer.zero_grad()
             loss.backward()
             optimizer.step()
@@ -412,16 +462,16 @@ def fitTake(max_iter, lr_base, lr_ramp, pose_lr, cam_iter, basemeshpath, localbl
             # Print loss logging
             log = (log_interval and (i % log_interval == 0))
             if log:
-                print(f"Img {frame_idx} - It[{i}] - Loss: {loss}")
+                print(f"Img {frame_idx} cam {cam_idx} - It[{i}] - Loss: {loss} - lr: {scheduler.get_lr()}")
 
             # Show/save image.
             display_image = (display_interval and (i % display_interval == 0)) or i == max_iter
             save_mp4 = (mp4_interval and (i % mp4_interval == 0) and i)
             if display_image or save_mp4:
-                # img_ref = torch.reshape(ref_blur, (ref_blur.shape[2], ref_blur.shape[3], ref_blur.shape[1])).cpu().numpy()
+                # img_ref = torch.reshape(ref_blur, (ref_blur.shape[1], ref_blur.shape[2], ref_blur.shape[0])).cpu().numpy()
                 img_ref = ref.cpu().numpy()
                 img_ref = np.flip(np.array(img_ref.copy(), dtype=np.float32) / 255, 0)
-                # img_col = np.flip(torch.reshape(colour_blur, (colour_blur.shape[2], colour_blur.shape[3], colour_blur.shape[1])).cpu().detach().numpy(), 0)
+                # img_col = np.flip(torch.reshape(colour_blur, (colour_blur.shape[1], colour_blur.shape[2], colour_blur.shape[0])).cpu().detach().numpy(), 0)
                 img_col = np.flip(colour.cpu().detach().numpy(), 0)
                 result_image = utils.make_img(np.stack([img_ref, img_col]))
                 if display_image:
