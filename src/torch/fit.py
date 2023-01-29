@@ -14,6 +14,7 @@ import torchvision.transforms as transforms
 import pytorch3d.structures.meshes as meshes
 import pytorch3d.loss.mesh_laplacian_smoothing as laplacian
 import pytorch3d.loss.mesh_edge_loss as mel
+import pytorch3d.loss.mesh_normal_consistency as mnc
 
 # local
 import src.torch.data as data
@@ -262,7 +263,7 @@ def laplacian_regularization(base_vtx_differential, vtx_pos, vertex_neighbours, 
 
 # -------------------------------------------------------------------------------------------------
 
-def fitTake(max_iter, lr_base, lr_ramp, basemeshpath, localblpath, globalblpath, display_interval,
+def fitTake(max_iter, lr_base, lr_tex_coef, lr_ramp, basemeshpath, localblpath, globalblpath, display_interval,
             log_interval, imdir, calibpath, enable_mip, max_mip_level, texshape, out_dir, resolution,
             mp4_interval, texpath="", maskpath=""):
     """
@@ -270,6 +271,7 @@ def fitTake(max_iter, lr_base, lr_ramp, basemeshpath, localblpath, globalblpath,
 
     :param max_iter: Max iterations (int)
     :param lr_base: Base learning rate
+    :param lr_tex_coef: Coefficient with which to multiply the texture learning rate w.r.t. lr_base
     :param lr_ramp: Learning rate ramp-down for use with torch.optim.lr_scheduler:
                     lr_base * lr_ramp ^ (epoch/max_iter)
     :param pose_lr: Learning rate for translation and rotation optimization
@@ -290,6 +292,8 @@ def fitTake(max_iter, lr_base, lr_ramp, basemeshpath, localblpath, globalblpath,
     :param maskpath: Path to vertex mask directory
     :return:
     """
+
+    args = locals()
 
     # miscellaneous setup
     if mp4_interval:
@@ -354,7 +358,7 @@ def fitTake(max_iter, lr_base, lr_ramp, basemeshpath, localblpath, globalblpath,
         optimizer = torch.optim.Adam([{"params": m1, 'lr': lr_base},
                                       {"params": m2, 'lr': lr_base},
                                       {"params": m3, 'lr': lr_base},
-                                      {"params": tex_opt, 'lr': 10e-5}], lr=lr_base)
+                                      {"params": tex_opt, 'lr': lr_base * lr_tex_coef}], lr=lr_base)
         scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer,
                                                       lr_lambda=lambda x: lr_ramp ** (
                                                               float(x) / float(max_iter)))
@@ -442,14 +446,13 @@ def fitTake(max_iter, lr_base, lr_ramp, basemeshpath, localblpath, globalblpath,
             # L2 pixel loss, *255 to channels from opengl. Second loss term to penalize large translations
             # mesh laplacian term through pytorch3d
             loss_mesh = meshes.Meshes(verts=[vtx_pos_split], faces=[pos_idx]).cuda()
-            # loss = torch.mean((ref - colour * 255) ** 2) + (10*(abs(laplacian(loss_mesh) - laplacian(v_base_loss_mesh)))**2)   # + torch.sqrt(torch.sum(t_opt))
-            loss = torch.mean((ref - colour*255) ** 2)\
-                    + 10000*(laplacian(loss_mesh) - laplacian(v_base_loss_mesh))**3
-                    # + 100*mel(loss_mesh, 0.1)
+            loss = torch.mean((ref - colour*255) ** 2) + \
+                    100*mel(loss_mesh, 0.1) + \
+                    1000*laplacian(loss_mesh)**2 + \
+                    1000*mnc(loss_mesh)
             with torch.no_grad():
-                if not i % 1000:
-                    print(f"LAPLACIAN : {10000*(laplacian(loss_mesh) - laplacian(v_base_loss_mesh))**3} ===== ")
-                          # f"MESH EDGE : {10*mel(loss_mesh, 0.1)}")
+                if not i % 500:
+                    print(f"=== MEL: {80*mel(loss_mesh, 0.1)} --- LAP: {5000*laplacian(loss_mesh)**2} --- MNC: {500*mnc(loss_mesh)}")
             optimizer.zero_grad()
             loss.backward()
             optimizer.step()
@@ -491,4 +494,9 @@ def fitTake(max_iter, lr_base, lr_ramp, basemeshpath, localblpath, globalblpath,
             writer.close()
 
     save(result, uv, pos_idx, tex_opt.cpu().detach().numpy(), out_dir)
+
+    # save config file with settings
+    with open(os.path.join(out_dir, "config.txt"), 'w') as f:
+        for arg in args:
+            f.write(f"{arg}: '{args[arg]}'\n")
     print("Done")
