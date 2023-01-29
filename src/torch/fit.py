@@ -10,6 +10,7 @@ import roma as roma
 import imageio
 import torch
 import nvdiffrast.torch as dr
+import torchvision.utils
 import torchvision.transforms as transforms
 import pytorch3d.structures.meshes as meshes
 import pytorch3d.loss.mesh_laplacian_smoothing as laplacian
@@ -57,6 +58,43 @@ def blend_free(v_base, m1, m2, m3, frames):
     basis = torch.matmul(m2, mapped)
     prod = torch.matmul(m3, basis)
     vtx_pos = torch.add(v_base, prod)
+    return vtx_pos
+
+# -------------------------------------------------------------------------------------------------
+
+def blend_combined(v_base, m1, m2, m3, maps, maps_intermediate, dataset, frames, learned_coefficient=1.0):
+    """
+        Get blended vertex positions from decomposed matrix of vertex positions combined with rig prior
+
+        :param v_base: Base mesh vertex positions of shape [3*v], (x,y,z,x,...)
+        :param m1: Mapping from frames to learned vertex deltas
+        :param m2: Mapping from frames to learned vertex deltas
+        :param m3: Learned basis of vertex deltas
+
+        :param maps: Dict of mappings, one mapping for each dataset: local, global, pca. Shape (n_frames, n_frames)
+        :param maps_intermediate: Dict of intermediate mappings, similar as param maps but of shape (n_blendshapes, n_frames)
+        :param dataset: Dict of datasets (blendshapes): local, global, pca. Shape (3*n_vertices, n_blendshapes)
+
+        :param frames: One-hot vector of frame index, with value at frame i being 1.
+        :param learned_coefficient: Coefficient for weight of learned shape basis
+
+        :return: Blended mesh vertex positions of shape [3*v], (x,y,z,x,...)
+
+    """
+
+    # Decompose vertex positions into a matrix product to make optimization landscape more tractable.
+    # Hence, matrices mapped and mapped_intermediate for feeding one-hot frame tensor into blendshape dataset
+    mapped = torch.matmul(maps['local'], frames)
+    mapped_intermediate = torch.matmul(maps_intermediate['local'], mapped)
+    bl_res = torch.matmul(dataset['local'], mapped_intermediate)
+
+    # learned basis and mapping matrices from Laine et al.
+    mapped = torch.matmul(m1, frames)
+    basis = torch.matmul(m2, mapped)
+    prod = torch.matmul(m3, basis)
+
+    vtx_pos = torch.add(v_base, bl_res)
+    vtx_pos = torch.add(vtx_pos, learned_coefficient*prod)
     return vtx_pos
 
 # -------------------------------------------------------------------------------------------------
@@ -193,13 +231,15 @@ def setup_dataset(localblpath, globalblpath, n_frames, n_vertices_x3, v_basemesh
 # -------------------------------------------------------------------------------------------------
 
 
-def save(meshes, uv, pos_idx, texture, directory):
+def save(meshes, uv, pos_idx, texture, texture_tensor, directory):
     """
     Save the sequence of optimized meshes per frame.
 
     :param meshes: Tensor of per-frame final meshes of shape (n_frames, n_vertices * 3)
     :param uv: Tensor of original UV coordinates
     :param pos_idx: Tensor of mesh faces (triangles)
+    :param texture: Numpy array containing texture
+    :param texture_tensor: Tensor containing texture
     :param directory: destination path to save to (str)
 
     :return:
@@ -227,7 +267,21 @@ def save(meshes, uv, pos_idx, texture, directory):
             f.writelines(faces)
 
     print("Saving texture...")
-    imageio.imwrite(os.path.join(directory, "texture.png"), np.flip(texture, 0), format="png")
+    try:
+        image = Image.fromarray(texture)
+        image.save(os.path.join(directory, "texture_PIL.png"), format='PNG')
+    except Exception as e:
+        print(f"PIL failed with '{str(e)}'")
+    try:
+        imageio.imwrite(os.path.join(directory, "texture_imageio.png"), np.flip(texture, 0), format="png")
+    except Exception as e:
+        print(f"imageio failed with '{str(e)}'")
+    try:
+        torchvision.utils.save_image(texture_tensor, os.path.join(directory, "texture_torchvision.png"))
+    except Exception as e:
+        print(f"torchvision failed with '{str(e)}'")
+
+
 
 # -------------------------------------------------------------------------------------------------
 
@@ -263,9 +317,9 @@ def laplacian_regularization(base_vtx_differential, vtx_pos, vertex_neighbours, 
 
 # -------------------------------------------------------------------------------------------------
 
-def fitTake(max_iter, lr_base, lr_tex_coef, lr_ramp, basemeshpath, localblpath, globalblpath, display_interval,
+def fitTake(max_iter, lr_base, lr_tex_coef, lr_ramp, lr_t, lr_q, basemeshpath, localblpath, globalblpath, display_interval,
             log_interval, imdir, calibpath, enable_mip, max_mip_level, texshape, out_dir, resolution,
-            mp4_interval, texpath="", maskpath=""):
+            mp4_interval, weight_laplacian, weight_meshedge, meshedge_target, weight_normalconsistency, texpath="", maskpath=""):
     """
     Fit one take (continuous range of frames).
 
@@ -274,6 +328,8 @@ def fitTake(max_iter, lr_base, lr_tex_coef, lr_ramp, basemeshpath, localblpath, 
     :param lr_tex_coef: Coefficient with which to multiply the texture learning rate w.r.t. lr_base
     :param lr_ramp: Learning rate ramp-down for use with torch.optim.lr_scheduler:
                     lr_base * lr_ramp ^ (epoch/max_iter)
+    :param lr_t: Base learning rate for translation vectors
+    :param lr_q: Base learning rate for rotation quaternions
     :param pose_lr: Learning rate for translation and rotation optimization
     :param basemeshpath: Path to the base mesh
     :param localblpath: Path to directory of local blendshapes
@@ -290,6 +346,10 @@ def fitTake(max_iter, lr_base, lr_tex_coef, lr_ramp, basemeshpath, localblpath, 
     :param resolution: Resolution to render in (height, width)
     :param mp4_interval: Interval in which to save mp4 frames. 0 for no mp4 saving.
     :param maskpath: Path to vertex mask directory
+    :param weight_laplacian: Weight coefficient in loss function for laplacian
+    :param weight_meshedge: Weight coefficient in loss function for mesh edge length normalization
+    :param meshedge_target: Target value for mesh edge length normalization
+    :param weight_normalconsistency: Weight coefficient in loss function for mesh normal consistency
     :return:
     """
 
@@ -341,7 +401,7 @@ def fitTake(max_iter, lr_base, lr_tex_coef, lr_ramp, basemeshpath, localblpath, 
 
         # blendshapes and mappings
         n_vertices_x3 = v_base.shape[0]
-        # datasets, maps, maps_intermediate, v_f = setup_dataset(localblpath, globalblpath, n_frames, n_vertices_x3, basemesh.vertices)
+        datasets, maps, maps_intermediate, v_f = setup_dataset(localblpath, globalblpath, n_frames, n_vertices_x3, basemesh.vertices)
         m1, m2, m3, v_f = setup_dataset_free(n_frames, n_vertices_x3)
 
         # context and optimizer
@@ -358,6 +418,10 @@ def fitTake(max_iter, lr_base, lr_tex_coef, lr_ramp, basemeshpath, localblpath, 
         optimizer = torch.optim.Adam([{"params": m1, 'lr': lr_base},
                                       {"params": m2, 'lr': lr_base},
                                       {"params": m3, 'lr': lr_base},
+                                      {"params": maps['local'], 'lr': lr_base, 'weight_decay': 10e-1},
+                                      {"params": maps_intermediate['local'], 'lr': lr_base, 'weight_decay': 10e-1},
+                                      {"params": t_opt, 'lr': lr_t},
+                                      {"params": q_opt, 'lr': lr_q},
                                       {"params": tex_opt, 'lr': lr_base * lr_tex_coef}], lr=lr_base)
         scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer,
                                                       lr_lambda=lambda x: lr_ramp ** (
@@ -379,7 +443,7 @@ def fitTake(max_iter, lr_base, lr_tex_coef, lr_ramp, basemeshpath, localblpath, 
             trans_calib = np.asarray(calib['translation'], dtype=np.float32)
             calib_lookup.append({'cam': cam, 'intr': intr, 'dist': dist, 'rot': rot, 'trans_calib': trans_calib})
 
-        # starting camera iteration
+        # start camera & frame iteration
         for i in range(max_iter):
             cam_idx = random.randint(0, 8)
             frame_idx = random.randint(0, n_frames-1)
@@ -428,7 +492,6 @@ def fitTake(max_iter, lr_base, lr_tex_coef, lr_ramp, basemeshpath, localblpath, 
             Compute loss and train.
             =======================
             """
-            # TODO: add activation constraints (L1 sparsity)
 
             # local contrast (response) normalization over channels to account for
             # lighting changes between reference and rendered image
@@ -447,12 +510,12 @@ def fitTake(max_iter, lr_base, lr_tex_coef, lr_ramp, basemeshpath, localblpath, 
             # mesh laplacian term through pytorch3d
             loss_mesh = meshes.Meshes(verts=[vtx_pos_split], faces=[pos_idx]).cuda()
             loss = torch.mean((ref - colour*255) ** 2) + \
-                    100*mel(loss_mesh, 0.1) + \
-                    1000*laplacian(loss_mesh)**2 + \
-                    1000*mnc(loss_mesh)
+                    weight_meshedge*mel(loss_mesh, 0.1) + \
+                    weight_laplacian*laplacian(loss_mesh)**2 + \
+                    weight_normalconsistency*mnc(loss_mesh)
             with torch.no_grad():
                 if not i % 500:
-                    print(f"=== MEL: {80*mel(loss_mesh, 0.1)} --- LAP: {5000*laplacian(loss_mesh)**2} --- MNC: {500*mnc(loss_mesh)}")
+                    print(f"=== MEL: {weight_meshedge*mel(loss_mesh, meshedge_target)} --- LAP: {weight_laplacian*laplacian(loss_mesh)**2} --- MNC: {weight_normalconsistency*mnc(loss_mesh)}")
             optimizer.zero_grad()
             loss.backward()
             optimizer.step()
@@ -484,7 +547,7 @@ def fitTake(max_iter, lr_base, lr_tex_coef, lr_ramp, basemeshpath, localblpath, 
 
             v_f[frame_idx] = 0.0
             cam_idx_tensor[cam_idx] = 0.0
-            result[frame_idx] = vtx_pos
+            result[frame_idx] = vtx_pos.detach().clone()
 
     except KeyboardInterrupt:
         if writer is not None:
@@ -493,7 +556,7 @@ def fitTake(max_iter, lr_base, lr_tex_coef, lr_ramp, basemeshpath, localblpath, 
         if writer is not None:
             writer.close()
 
-    save(result, uv, pos_idx, tex_opt.cpu().detach().numpy(), out_dir)
+    save(result, uv, pos_idx, tex_opt.cpu().detach().clone().numpy(), tex_opt.cpu(), out_dir)
 
     # save config file with settings
     with open(os.path.join(out_dir, "config.txt"), 'w') as f:
