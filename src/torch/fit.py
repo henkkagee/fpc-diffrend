@@ -62,7 +62,7 @@ def blend_free(v_base, m1, m2, m3, frames):
 
 # -------------------------------------------------------------------------------------------------
 
-def blend_combined(v_base, m1, m2, m3, maps, maps_intermediate, dataset, frames, learned_coefficient=1.0):
+def blend_combined(v_base, m1, m2, m3, maps, maps_intermediate, datasets, frames, learned_coefficient=1.0):
     """
         Get blended vertex positions from decomposed matrix of vertex positions combined with rig prior
 
@@ -86,7 +86,7 @@ def blend_combined(v_base, m1, m2, m3, maps, maps_intermediate, dataset, frames,
     # Hence, matrices mapped and mapped_intermediate for feeding one-hot frame tensor into blendshape dataset
     mapped = torch.matmul(maps['local'], frames)
     mapped_intermediate = torch.matmul(maps_intermediate['local'], mapped)
-    bl_res = torch.matmul(dataset['local'], mapped_intermediate)
+    bl_res = torch.matmul(datasets['local'], mapped_intermediate)
 
     # learned basis and mapping matrices from Laine et al.
     mapped = torch.matmul(m1, frames)
@@ -254,8 +254,6 @@ def save(meshes, uv, pos_idx, texture, texture_tensor, directory):
     except Exception:
         print("faces.txt not found!")
         faces = ""
-    """with open(os.path.join(directory, "vn.txt"), mode="r") as f:
-        faces = f.readlines()"""
     for i, mesh in enumerate(meshes):
         with open(os.path.join(directory, f"{str(i)}.obj"), mode="w") as f:
             v = 0
@@ -266,22 +264,11 @@ def save(meshes, uv, pos_idx, texture, texture_tensor, directory):
                 f.write(f"vt {u[0]} {u[1]}\n")
             f.writelines(faces)
 
-    print("Saving texture...")
+    print(f"Saving texture... with shape {texture.shape}")
     try:
-        image = Image.fromarray(texture)
-        image.save(os.path.join(directory, "texture_PIL.png"), format='PNG')
-    except Exception as e:
-        print(f"PIL failed with '{str(e)}'")
-    try:
-        imageio.imwrite(os.path.join(directory, "texture_imageio.png"), np.flip(texture, 0), format="png")
+        imageio.imwrite(os.path.join(directory, "texture.png"), (np.flip(texture, 0)*255).astype(np.uint8), format="png")
     except Exception as e:
         print(f"imageio failed with '{str(e)}'")
-    try:
-        torchvision.utils.save_image(texture_tensor, os.path.join(directory, "texture_torchvision.png"))
-    except Exception as e:
-        print(f"torchvision failed with '{str(e)}'")
-
-
 
 # -------------------------------------------------------------------------------------------------
 
@@ -319,7 +306,7 @@ def laplacian_regularization(base_vtx_differential, vtx_pos, vertex_neighbours, 
 
 def fitTake(max_iter, lr_base, lr_tex_coef, lr_ramp, lr_t, lr_q, basemeshpath, localblpath, globalblpath, display_interval,
             log_interval, imdir, calibpath, enable_mip, max_mip_level, texshape, out_dir, resolution,
-            mp4_interval, weight_laplacian, weight_meshedge, meshedge_target, weight_normalconsistency, texpath="", maskpath=""):
+            mp4_interval, tex_startlearnratio, weight_laplacian, weight_meshedge, meshedge_target, weight_normalconsistency, texpath="", maskpath=""):
     """
     Fit one take (continuous range of frames).
 
@@ -345,6 +332,7 @@ def fitTake(max_iter, lr_base, lr_tex_coef, lr_ramp, lr_t, lr_q, basemeshpath, l
     :param out_dir: Directory to save result data to
     :param resolution: Resolution to render in (height, width)
     :param mp4_interval: Interval in which to save mp4 frames. 0 for no mp4 saving.
+    :param tex_startlearnratio: Inverse of iteration duration ratio for when to start learning texture
     :param maskpath: Path to vertex mask directory
     :param weight_laplacian: Weight coefficient in loss function for laplacian
     :param weight_meshedge: Weight coefficient in loss function for mesh edge length normalization
@@ -380,11 +368,13 @@ def fitTake(max_iter, lr_base, lr_tex_coef, lr_ramp, lr_t, lr_q, basemeshpath, l
         uv_idx = torch.tensor(basemesh.fuv, dtype=torch.int32, device='cuda')
         if texpath:
             tex = np.array(Image.open(texpath)) / 255.0
+            print(f"tex shape as raw: {tex.shape}")
             tex = tex[..., np.newaxis]
             tex = np.flip(tex, 0)
         else:
             tex = np.random.uniform(low=0.0, high=1.0, size=texshape)
-        tex_opt = torch.tensor(tex.copy(), dtype=torch.float32, device='cuda', requires_grad=True)
+        tex_opt = torch.tensor(tex.copy(), dtype=torch.float32, device='cuda', requires_grad=False)
+        print(f"tex_opt shape: {tex_opt.shape}")
 
         # per-camera pose optimization
         # t_opt = torch.tensor([0.0, 0.0, 0.0], dtype=torch.float32, device='cuda', requires_grad=True)
@@ -479,7 +469,7 @@ def fitTake(max_iter, lr_base, lr_tex_coef, lr_ramp, lr_t, lr_q, basemeshpath, l
 
             # get blended vertex positions according to eq.
             # vtx_pos = blend(v_base, maps, maps_intermediate, datasets, v_f)
-            vtx_pos = blend_free(v_base, m1, m2, m3, v_f)
+            vtx_pos = blend_combined(v_base, m1, m2, m3, maps, maps_intermediate, datasets, v_f)
             # split [n_vertices * 3] to [n_vertices, 3] as a view of the original tensor
             vtx_pos_split = torch.reshape(vtx_pos, (vtx_pos.shape[0] // 3, 3))
 
@@ -513,9 +503,19 @@ def fitTake(max_iter, lr_base, lr_tex_coef, lr_ramp, lr_t, lr_q, basemeshpath, l
                     weight_meshedge*mel(loss_mesh, 0.1) + \
                     weight_laplacian*laplacian(loss_mesh)**2 + \
                     weight_normalconsistency*mnc(loss_mesh)
+
             with torch.no_grad():
                 if not i % 500:
-                    print(f"=== MEL: {weight_meshedge*mel(loss_mesh, meshedge_target)} --- LAP: {weight_laplacian*laplacian(loss_mesh)**2} --- MNC: {weight_normalconsistency*mnc(loss_mesh)}")
+                    print(f"=== MEL: {weight_meshedge*mel(loss_mesh, meshedge_target)} ---"
+                          f" LAP: {weight_laplacian*laplacian(loss_mesh)**2} ---"
+                          f" MNC: {weight_normalconsistency*mnc(loss_mesh)}")
+            if i > max_iter/20:
+                tex_opt.requires_grad = True
+            if i > max_iter/2:
+                optimizer.param_groups[7]['lr'] *= 10
+            if i > max_iter/4*3:
+                optimizer.param_groups[7]['lr'] *= 10
+
             optimizer.zero_grad()
             loss.backward()
             optimizer.step()

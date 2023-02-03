@@ -45,9 +45,9 @@ def render(glctx, mtx, pos, pos_idx, uv, uv_idx, tex, resolution):
 # -------------------------------------------------------------------------------------------------
 
 # Get objs
-DIR = r"C:\Users\Henrik\fpc-diffrend\data\out\dialogie_120_lapmelmnc_tweakweighs\result"
+DIR = r"C:\Users\Henrik\fpc-diffrend\data\out\d120_delayedtex_combined\result"
 objs = os.listdir(DIR)
-texpath = os.path.join(DIR, "texture.png")
+texpath = os.path.join(DIR, "ilkka_villi_anchor_greyscale_fix.png")
 
 # common mesh info
 basemesh = data.MeshData(os.path.join(DIR, "basemesh.obj"))
@@ -75,7 +75,7 @@ rot = np.asarray(calib['rotation'], dtype=np.float32)
 trans_calib = np.asarray(calib['translation'], dtype=np.float32)
 
 glctx = dr.RasterizeGLContext(device='cuda')
-writer = imageio.get_writer(f'{DIR}/result_vid_tweak.mp4', mode='I', fps=30, codec='libx264', bitrate='16M')
+writer = imageio.get_writer(f'{DIR}/result_reftex.mp4', mode='I', fps=30, codec='libx264', bitrate='16M')
 
 """for i, obj in enumerate(objs):
     if "basemesh" in obj:
@@ -84,7 +84,7 @@ writer = imageio.get_writer(f'{DIR}/result_vid_tweak.mp4', mode='I', fps=30, cod
     vertices = []
     with open(os.path.join(DIR, obj), 'r') as f:"""
 
-for i in range(0, 60):
+for i in range(0, 120):
     vertices = []
     with open(os.path.join(DIR, f"{i}.obj"), 'r') as f:
         for line in f:
@@ -111,7 +111,7 @@ for i in range(0, 60):
     img_col = np.flip(colour.cpu().detach().numpy())
     # result_image = utils.make_img(img_col)
     utils.display_image(img_col)
-    imageio.imwrite(f'{DIR}/frame{i}_tweak.png', img_col, format='png')
+    imageio.imwrite(f'{DIR}/frame{i}_text.png', img_col, format='png')
     writer.append_data(np.clip(np.rint(img_col * 255.0), 0, 255).astype(np.uint8))
 
 writer.close()
