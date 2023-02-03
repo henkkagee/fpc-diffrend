@@ -306,7 +306,7 @@ def laplacian_regularization(base_vtx_differential, vtx_pos, vertex_neighbours, 
 
 def fitTake(max_iter, lr_base, lr_tex_coef, lr_ramp, lr_t, lr_q, basemeshpath, localblpath, globalblpath, display_interval,
             log_interval, imdir, calibpath, enable_mip, max_mip_level, texshape, out_dir, resolution,
-            mp4_interval, tex_startlearnratio, weight_laplacian, weight_meshedge, meshedge_target, weight_normalconsistency, texpath="", maskpath=""):
+            mp4_interval, tex_startlearnratio, tex_ramplearnratio, weight_laplacian, weight_meshedge, meshedge_target, weight_normalconsistency, texpath="", maskpath=""):
     """
     Fit one take (continuous range of frames).
 
@@ -333,6 +333,7 @@ def fitTake(max_iter, lr_base, lr_tex_coef, lr_ramp, lr_t, lr_q, basemeshpath, l
     :param resolution: Resolution to render in (height, width)
     :param mp4_interval: Interval in which to save mp4 frames. 0 for no mp4 saving.
     :param tex_startlearnratio: Inverse of iteration duration ratio for when to start learning texture
+    :param tex_ramplearnratio: Inverse of iteration duratio ratio for when to ramp learning texture lr
     :param maskpath: Path to vertex mask directory
     :param weight_laplacian: Weight coefficient in loss function for laplacian
     :param weight_meshedge: Weight coefficient in loss function for mesh edge length normalization
@@ -373,7 +374,7 @@ def fitTake(max_iter, lr_base, lr_tex_coef, lr_ramp, lr_t, lr_q, basemeshpath, l
             tex = np.flip(tex, 0)
         else:
             tex = np.random.uniform(low=0.0, high=1.0, size=texshape)
-        tex_opt = torch.tensor(tex.copy(), dtype=torch.float32, device='cuda', requires_grad=False)
+        tex_opt = torch.tensor(tex.copy(), dtype=torch.float32, device='cuda', requires_grad=True)
         print(f"tex_opt shape: {tex_opt.shape}")
 
         # per-camera pose optimization
@@ -443,8 +444,8 @@ def fitTake(max_iter, lr_base, lr_tex_coef, lr_ramp, lr_t, lr_q, basemeshpath, l
             img = np.array(Image.open(os.path.join(camdir, f"{calib_lookup[cam_idx]['cam']}_{frame_idx:0{digits}d}.tif")))
             ref = torch.tensor(np.flip(img, 0).copy(), dtype=torch.float32, device='cuda')
             ref = ref.reshape((ref.shape[0], ref.shape[1], 1))
-            # ref_norm = lrn(ref.permute(0, 2, 1))
-            # ref_norm = ref_norm.permute(0, 2, 1)
+            ref_norm = lrn(ref.permute(0, 2, 1))
+            ref_norm = ref_norm.permute(0, 2, 1)
             # smoothing = utils.GaussianSmoothing(1, 32, 1)
             # smoothing = smoothing.to('cuda')
             # ref_blur = smoothing(torch.reshape(ref_norm, (1, ref_norm.shape[2], ref_norm.shape[0], ref_norm.shape[1])))
@@ -486,9 +487,9 @@ def fitTake(max_iter, lr_base, lr_tex_coef, lr_ramp, lr_t, lr_q, basemeshpath, l
             # local contrast (response) normalization over channels to account for
             # lighting changes between reference and rendered image
             # torch local response norm needs channel dimension to be in dim 1
-            # colour_norm = lrn(colour.permute(0, 2, 1))
+            colour_norm = lrn(colour.permute(0, 2, 1))
             # permute back original shape from lrn shape requirements (need to have channel back in dim 2)
-            # colour_norm = colour_norm.permute(0, 2, 1)
+            colour_norm = colour_norm.permute(0, 2, 1)
             # blur before calculating pixel space loss using gaussian kernel of size 32
             # more tractable optimization landscape
             # built-in gaussian not available for torch tensors since we can't use the right torch3d version
@@ -509,11 +510,11 @@ def fitTake(max_iter, lr_base, lr_tex_coef, lr_ramp, lr_t, lr_q, basemeshpath, l
                     print(f"=== MEL: {weight_meshedge*mel(loss_mesh, meshedge_target)} ---"
                           f" LAP: {weight_laplacian*laplacian(loss_mesh)**2} ---"
                           f" MNC: {weight_normalconsistency*mnc(loss_mesh)}")
-            if i > max_iter/20:
+            if i > max_iter/tex_startlearnratio:
                 tex_opt.requires_grad = True
-            if i > max_iter/2:
+            if i > max_iter/tex_ramplearnratio[0]:
                 optimizer.param_groups[7]['lr'] *= 10
-            if i > max_iter/4*3:
+            if i > max_iter/tex_ramplearnratio[1]:
                 optimizer.param_groups[7]['lr'] *= 10
 
             optimizer.zero_grad()
