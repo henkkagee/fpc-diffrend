@@ -46,7 +46,7 @@ def render(glctx, mtx, pos, pos_idx, uv, uv_idx, tex, resolution):
 
 # Get objs
 REFDIR = r"C:\Users\Henrik\fpc-diffrend\data\reference\dialogue\scene1\take03\20201022_iv_s1_t3_p2col_r1\pod2colour_pod2texture"
-DIR = r"C:\Users\Henrik\fpc-diffrend\data\out\d120_newgeom\result"
+DIR = r"C:\Users\Henrik\fpc-diffrend\data\out\d120_newgeom_flip\result"
 objs = os.listdir(DIR)
 texpath = os.path.join(DIR, "texture.png")
 
@@ -76,7 +76,7 @@ rot = np.asarray(calib['rotation'], dtype=np.float32)
 trans_calib = np.asarray(calib['translation'], dtype=np.float32)
 
 glctx = dr.RasterizeGLContext(device='cuda')
-writer = imageio.get_writer(f'{DIR}/result_comparison3.mp4', mode='I', fps=30, codec='libx264', bitrate='16M')
+writer = imageio.get_writer(f'{DIR}/result_comparison.mp4', mode='I', fps=30, codec='libx264', bitrate='16M')
 
 """for i, obj in enumerate(objs):
     if "basemesh" in obj:
@@ -116,7 +116,7 @@ for i in range(0, 120):
 
     # result_image = utils.make_img(img_col)
     result_image = utils.make_img(np.stack([ref, img_col]))
-    utils.display_image(result_image)
+    utils.display_image(result_image/255.0)
     # imageio.imwrite(f'{DIR}/frame{i}.png', img_col, format='png')
     writer.append_data(np.clip(np.rint(result_image), 0, 255).astype(np.uint8))
 

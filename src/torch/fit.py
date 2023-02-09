@@ -170,9 +170,9 @@ def setup_dataset_free(n_frames, n_vertices_x3):
     :return:
     """
 
-    m1 = torch.eye(n_frames, dtype=torch.float32, device='cuda', requires_grad=True)
-    m2 = torch.eye(n_frames, dtype=torch.float32, device='cuda', requires_grad=True)
-    m3 = torch.zeros((n_vertices_x3, n_frames), dtype=torch.float32, device='cuda', requires_grad=True)
+    m1 = torch.eye(n_frames, dtype=torch.float32, device='cuda', requires_grad=False)
+    m2 = torch.eye(n_frames, dtype=torch.float32, device='cuda', requires_grad=False)
+    m3 = torch.zeros((n_vertices_x3, n_frames), dtype=torch.float32, device='cuda', requires_grad=False)
 
     return m1, m2, m3, torch.zeros(n_frames, dtype=torch.float32, device='cuda')
 
@@ -304,9 +304,36 @@ def laplacian_regularization(base_vtx_differential, vtx_pos, vertex_neighbours, 
 
 # -------------------------------------------------------------------------------------------------
 
-def fitTake(max_iter, lr_base, lr_tex_coef, lr_ramp, lr_t, lr_q, basemeshpath, localblpath, globalblpath, display_interval,
-            log_interval, imdir, calibpath, enable_mip, max_mip_level, texshape, out_dir, resolution,
-            mp4_interval, tex_startlearnratio, tex_ramplearnratio, weight_laplacian, weight_meshedge, meshedge_target, weight_normalconsistency, texpath="", maskpath=""):
+def fitTake(max_iter,
+            lr_base,
+            lr_tex_coef,
+            lr_ramp,
+            lr_t,
+            lr_q,
+            basemeshpath,
+            localblpath,
+            globalblpath,
+            display_interval,
+            log_interval,
+            imdir,
+            calibpath,
+            enable_mip,
+            max_mip_level,
+            texshape,
+            out_dir,
+            resolution,
+            mp4_interval,
+            tex_startlearnratio,
+            tex_ramplearnratio,
+            free_startlearnratio,
+            weight_laplacian,
+            weight_meshedge,
+            meshedge_target,
+            weight_normalconsistency,
+            whiten_mean=50,
+            whiten_std=25,
+            texpath="",
+            maskpath=""):
     """
     Fit one take (continuous range of frames).
 
@@ -339,6 +366,8 @@ def fitTake(max_iter, lr_base, lr_tex_coef, lr_ramp, lr_t, lr_q, basemeshpath, l
     :param weight_meshedge: Weight coefficient in loss function for mesh edge length normalization
     :param meshedge_target: Target value for mesh edge length normalization
     :param weight_normalconsistency: Weight coefficient in loss function for mesh normal consistency
+    :param whiten_mean: Mean value to use for reference image whitening
+    :param whiten_std: Standard deviation value to use for reference image whitening
     :return:
     """
 
@@ -442,8 +471,15 @@ def fitTake(max_iter, lr_base, lr_tex_coef, lr_ramp, lr_t, lr_q, basemeshpath, l
             # reference image to render against
             camdir = os.path.join(imdir, calib_lookup[cam_idx]['cam'])
             img = np.array(Image.open(os.path.join(camdir, f"{calib_lookup[cam_idx]['cam']}_{frame_idx:0{digits}d}.tif")))
-            ref = torch.tensor(np.flip(img, 0).copy(), dtype=torch.float32, device='cuda')
+            img = np.clip(img, 0, 140)
+            # img = utils.normalize_highlights(img, alpha=1.5, beta=1.2)
+            # clip approximate highlights from image
+            # img = utils.reduceHighlights(img, 48)
+            ref = torch.tensor(np.flip(img, 0,).copy(), dtype=torch.float32, device='cuda')
             ref = ref.reshape((ref.shape[0], ref.shape[1], 1))
+            # ref = utils.whiten(ref, whiten_mean, whiten_std)
+
+
             ref_norm = lrn(ref.permute(0, 2, 1))
             ref_norm = ref_norm.permute(0, 2, 1)
             # smoothing = utils.GaussianSmoothing(1, 32, 1)
@@ -469,8 +505,8 @@ def fitTake(max_iter, lr_base, lr_tex_coef, lr_ramp, lr_t, lr_q, basemeshpath, l
             mvp = torch.matmul(proj, tr)
 
             # get blended vertex positions according to eq.
-            # vtx_pos = blend(v_base, maps, maps_intermediate, datasets, v_f)
-            vtx_pos = blend_combined(v_base, m1, m2, m3, maps, maps_intermediate, datasets, v_f)
+            vtx_pos = blend(v_base, maps, maps_intermediate, datasets, v_f)
+            # vtx_pos = blend_combined(v_base, m1, m2, m3, maps, maps_intermediate, datasets, v_f)
             # split [n_vertices * 3] to [n_vertices, 3] as a view of the original tensor
             vtx_pos_split = torch.reshape(vtx_pos, (vtx_pos.shape[0] // 3, 3))
 
@@ -516,6 +552,11 @@ def fitTake(max_iter, lr_base, lr_tex_coef, lr_ramp, lr_t, lr_q, basemeshpath, l
                 optimizer.param_groups[7]['lr'] *= 10
             if i > max_iter/tex_ramplearnratio[1]:
                 optimizer.param_groups[7]['lr'] *= 10
+            if i > max_iter/free_startlearnratio:
+                m1.requires_grad = True
+                m2.requires_grad = True
+                m3.requires_grad = True
+
 
             optimizer.zero_grad()
             loss.backward()
