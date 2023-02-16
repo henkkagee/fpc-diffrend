@@ -44,11 +44,25 @@ def render(glctx, mtx, pos, pos_idx, uv, uv_idx, tex, resolution):
 
 # -------------------------------------------------------------------------------------------------
 
+optimname = "d120_justblends_final"
+wireframe = True
+
 # Get objs
 REFDIR = r"C:\Users\Henrik\fpc-diffrend\data\reference\dialogue\scene1\take03\20201022_iv_s1_t3_p2col_r1\pod2colour_pod2texture"
-DIR = r"C:\Users\Henrik\fpc-diffrend\data\out\d120_justblends_final\result"
+DIR = r"C:\Users\Henrik\fpc-diffrend\data\out\{}\result".format(optimname)
 objs = os.listdir(DIR)
-texpath = os.path.join(DIR, "wireframe.png")
+if wireframe:
+    texpath = os.path.join(DIR, "wireframe.png")
+else:
+    texpath = os.path.join(DIR, "texture.png")
+
+"""camNames = ["pod2colour_pod1primary", "pod2colour_pod1secondary", "pod2colour_pod1texture",
+            "pod2colour_pod2primary", "pod2colour_pod2secondary", "pod2colour_pod2texture",
+            "pod2colour_pod3primary", "pod2colour_pod3secondary", "pod2colour_pod3texture", ]"""
+
+camNames = ["pod3primary", "pod2primary", "pod1primary",
+            "pod3secondary", "pod2secondary", "pod1secondary",
+            "pod3texture", "pod2texture", "pod1texture", ]
 
 # common mesh info
 basemesh = data.MeshData(os.path.join(DIR, "basemesh.obj"))
@@ -60,7 +74,7 @@ tex = tex[..., np.newaxis]
 tex = np.flip(tex, 0)
 tex = np.flip(tex, 1)
 tex = torch.tensor(tex.copy(), dtype=torch.float32, device='cuda', requires_grad=True)
-resolution = (1600, 1200)
+resolution = (800, 600)
 
 glctx = dr.RasterizeGLContext(device='cuda')
 
@@ -76,7 +90,7 @@ rot = np.asarray(calib['rotation'], dtype=np.float32)
 trans_calib = np.asarray(calib['translation'], dtype=np.float32)
 
 glctx = dr.RasterizeGLContext(device='cuda')
-writer = imageio.get_writer(f'{DIR}/result_comparison_wireframe.mp4', mode='I', fps=30, codec='libx264', bitrate='16M')
+writer = imageio.get_writer(f'{DIR}/result_multicam_{"wireframe" if wireframe else ""}.mp4', mode='I', fps=30, codec='libx264', bitrate='16M')
 
 """for i, obj in enumerate(objs):
     if "basemesh" in obj:
@@ -87,8 +101,8 @@ writer = imageio.get_writer(f'{DIR}/result_comparison_wireframe.mp4', mode='I', 
 
 for i in range(0, 120):
     vertices = []
-    ref = np.array(Image.open(os.path.join(REFDIR, f"pod2colour_pod2texture_{i:03d}.tif")))
-    ref = ref.reshape((ref.shape[0], ref.shape[1], 1))
+    # ref = np.array(Image.open(os.path.join(REFDIR, f"pod2colour_pod2texture_{i:03d}.tif")))
+    # ref = ref.reshape((ref.shape[0], ref.shape[1], 1))
     with open(os.path.join(DIR, f"{i}.obj"), 'r') as f:
         for line in f:
             if line.startswith("v "):
@@ -98,24 +112,35 @@ for i in range(0, 120):
 
     vtx_pos = torch.tensor(vertices, dtype=torch.float32, device='cuda')
 
-    projection = camera.intrinsic_to_projection(intr)
-    proj = torch.from_numpy(projection).cuda(device='cuda')
-    modelview = camera.extrinsic_to_modelview(rot, trans_calib)
-    trans = torch.tensor(camera.translate(0.0, 0.0, 0.0), dtype=torch.float32, device='cuda')
-    t_mv = torch.matmul(torch.from_numpy(modelview).cuda(device='cuda'), trans)
-    mvp = torch.matmul(proj, t_mv)
+    imgs = []
 
-    vtx_pos_split = torch.reshape(vtx_pos, (vtx_pos.shape[0] // 3, 3))
-    colour = render(glctx, mvp, vtx_pos_split, pos_idx, uv, uv_idx, tex, resolution) * 255.0
+    for cam in camNames:
+        calib = calibs[cam]
+        intr = np.asarray(calib['intrinsic'], dtype=np.float32)
+        dist = np.asarray(calib['distortion'], dtype=np.float32)
+        rot = np.asarray(calib['rotation'], dtype=np.float32)
+        trans_calib = np.asarray(calib['translation'], dtype=np.float32)
 
-    """img_col = np.flip(torch.reshape(
-        colour, (colour.shape[2], colour.shape[3], colour.shape[1])).cpu().detach().numpy(), 0)"""
+        projection = camera.intrinsic_to_projection(intr)
+        proj = torch.from_numpy(projection).cuda(device='cuda')
+        modelview = camera.extrinsic_to_modelview(rot, trans_calib)
+        trans = torch.tensor(camera.translate(0.0, 0.0, 0.0), dtype=torch.float32, device='cuda')
+        t_mv = torch.matmul(torch.from_numpy(modelview).cuda(device='cuda'), trans)
+        mvp = torch.matmul(proj, t_mv)
 
-    img_col = np.flip(colour.cpu().detach().numpy())
-    img_col = np.flip(img_col, 1)
+        vtx_pos_split = torch.reshape(vtx_pos, (vtx_pos.shape[0] // 3, 3))
+        colour = render(glctx, mvp, vtx_pos_split, pos_idx, uv, uv_idx, tex, resolution) * 255.0
+
+        """img_col = np.flip(torch.reshape(
+            colour, (colour.shape[2], colour.shape[3], colour.shape[1])).cpu().detach().numpy(), 0)"""
+
+        img_col = np.flip(colour.cpu().detach().numpy())
+        img_col = np.flip(img_col, 1)
+        imgs.append(img_col)
 
     # result_image = utils.make_img(img_col)
-    result_image = utils.make_img(np.stack([ref, img_col]))
+    # result_image = utils.make_img(np.stack([ref, img_col]))
+    result_image = utils.make_img(np.stack(imgs), ncols=3)
     utils.display_image(result_image/255.0)
     # imageio.imwrite(f'{DIR}/frame{i}.png', img_col, format='png')
     writer.append_data(np.clip(np.rint(result_image), 0, 255).astype(np.uint8))

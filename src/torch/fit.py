@@ -398,13 +398,11 @@ def fitTake(max_iter,
         uv_idx = torch.tensor(basemesh.fuv, dtype=torch.int32, device='cuda')
         if texpath:
             tex = np.array(Image.open(texpath)) / 255.0
-            print(f"tex shape as raw: {tex.shape}")
             tex = tex[..., np.newaxis]
             tex = np.flip(tex, 0)
         else:
             tex = np.random.uniform(low=0.0, high=1.0, size=texshape)
         tex_opt = torch.tensor(tex.copy(), dtype=torch.float32, device='cuda', requires_grad=True)
-        print(f"tex_opt shape: {tex_opt.shape}")
 
         # per-camera pose optimization
         # t_opt = torch.tensor([0.0, 0.0, 0.0], dtype=torch.float32, device='cuda', requires_grad=True)
@@ -415,6 +413,11 @@ def fitTake(max_iter,
         q_opt[:, 3] = 1.0
         q_opt.requires_grad = True
         cam_idx_tensor = torch.zeros(9, dtype=torch.float32, device='cuda', requires_grad=False)
+
+        per_frame_t = torch.zeros([n_frames, 3], dtype=torch.float32, device='cuda', requires_grad=True)
+        per_frame_q = torch.zeros([n_frames, 4], dtype=torch.float32, device='cuda', requires_grad=False)
+        per_frame_q[:, 3] = 1.0
+        per_frame_q.requires_grad = True
 
         # final shapes
         result = torch.empty(size=(n_frames, basemesh.vertices.shape[0]), dtype=torch.float32, device='cuda')
@@ -438,8 +441,8 @@ def fitTake(max_iter,
         optimizer = torch.optim.Adam([{"params": m1, 'lr': lr_base},
                                       {"params": m2, 'lr': lr_base},
                                       {"params": m3, 'lr': lr_base},
-                                      {"params": maps['local'], 'lr': lr_base, 'weight_decay': 10e-1},
-                                      {"params": maps_intermediate['local'], 'lr': lr_base, 'weight_decay': 10e-1},
+                                      {"params": maps['local'], 'lr': lr_base},
+                                      {"params": maps_intermediate['local'], 'lr': lr_base},
                                       {"params": t_opt, 'lr': lr_t},
                                       {"params": q_opt, 'lr': lr_q},
                                       {"params": tex_opt, 'lr': lr_base * lr_tex_coef}], lr=lr_base)
@@ -505,8 +508,8 @@ def fitTake(max_iter,
             mvp = torch.matmul(proj, tr)
 
             # get blended vertex positions according to eq.
-            vtx_pos = blend(v_base, maps, maps_intermediate, datasets, v_f)
-            # vtx_pos = blend_combined(v_base, m1, m2, m3, maps, maps_intermediate, datasets, v_f)
+            # vtx_pos = blend(v_base, maps, maps_intermediate, datasets, v_f)
+            vtx_pos = blend_combined(v_base, m1, m2, m3, maps, maps_intermediate, datasets, v_f)
             # split [n_vertices * 3] to [n_vertices, 3] as a view of the original tensor
             vtx_pos_split = torch.reshape(vtx_pos, (vtx_pos.shape[0] // 3, 3))
 
@@ -539,23 +542,24 @@ def fitTake(max_iter,
             loss = torch.mean((ref - colour*255) ** 2) + \
                     weight_meshedge*mel(loss_mesh, 0.1) + \
                     weight_laplacian*laplacian(loss_mesh)**2 + \
-                    weight_normalconsistency*mnc(loss_mesh)
+                    weight_normalconsistency*mnc(loss_mesh) #+  \
+                    # torch.mean(torch.sum(torch.matmul(m2, m1) ** 2, dim=0))
 
             with torch.no_grad():
                 if not i % 500:
                     print(f"=== MEL: {weight_meshedge*mel(loss_mesh, meshedge_target)} ---"
                           f" LAP: {weight_laplacian*laplacian(loss_mesh)**2} ---"
                           f" MNC: {weight_normalconsistency*mnc(loss_mesh)}")
-            if i > max_iter/tex_startlearnratio:
+            """if i > max_iter/tex_startlearnratio:
                 tex_opt.requires_grad = True
             if i > max_iter/tex_ramplearnratio[0]:
                 optimizer.param_groups[7]['lr'] *= 10
             if i > max_iter/tex_ramplearnratio[1]:
                 optimizer.param_groups[7]['lr'] *= 10
             if i > max_iter/free_startlearnratio:
-                m1.requires_grad = True
-                m2.requires_grad = True
-                m3.requires_grad = True
+                m1.requires_grad = False
+                m2.requires_grad = False
+                m3.requires_grad = False"""
 
 
             optimizer.zero_grad()
