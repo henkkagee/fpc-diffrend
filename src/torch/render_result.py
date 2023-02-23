@@ -1,6 +1,7 @@
 # builtin
 import os
 import json
+import codecs
 
 # 3rd party
 import numpy as np
@@ -8,6 +9,7 @@ import torch
 import nvdiffrast.torch as dr
 from PIL import Image
 import imageio
+import roma
 
 # local
 import src.torch.data as data
@@ -44,11 +46,19 @@ def render(glctx, mtx, pos, pos_idx, uv, uv_idx, tex, resolution):
 
 # -------------------------------------------------------------------------------------------------
 
+optimname = "d120_moreposelearn"
+wireframe = False
+n_frames = 120
+
 # Get objs
 REFDIR = r"C:\Users\Henrik\fpc-diffrend\data\reference\dialogue\scene1\take03\20201022_iv_s1_t3_p2col_r1\pod2colour_pod2texture"
-DIR = r"C:\Users\Henrik\fpc-diffrend\data\out\d120_justblends_final\result"
+DIR = r"C:\Users\Henrik\fpc-diffrend\data\out\{}\result".format(optimname)
 objs = os.listdir(DIR)
-texpath = os.path.join(DIR, "wireframe.png")
+
+if wireframe:
+    texpath = os.path.join(DIR, "ilkka_villi_anchor_greyscale_fix_wireframe.png")
+else:
+    texpath = os.path.join(DIR, "texture.png")
 
 # common mesh info
 basemesh = data.MeshData(os.path.join(DIR, "basemesh.obj"))
@@ -58,7 +68,6 @@ uv_idx = torch.tensor(basemesh.fuv, dtype=torch.int32, device='cuda')
 tex = np.array(Image.open(texpath))/255.0
 tex = tex[..., np.newaxis]
 tex = np.flip(tex, 0)
-tex = np.flip(tex, 1)
 tex = torch.tensor(tex.copy(), dtype=torch.float32, device='cuda', requires_grad=True)
 resolution = (1600, 1200)
 
@@ -75,17 +84,22 @@ dist = np.asarray(calib['distortion'], dtype=np.float32)
 rot = np.asarray(calib['rotation'], dtype=np.float32)
 trans_calib = np.asarray(calib['translation'], dtype=np.float32)
 
+# saved pose tensors
+obj_text = codecs.open(os.path.join(DIR, 'pose.json'), 'r', encoding='utf-8').read()
+dictobj = json.loads(obj_text)
+trans = torch.tensor(dictobj['translation'])
+rot = torch.tensor(dictobj['rotation'])
+
 glctx = dr.RasterizeGLContext(device='cuda')
-writer = imageio.get_writer(f'{DIR}/result_comparison_wireframe.mp4', mode='I', fps=30, codec='libx264', bitrate='16M')
+writer = imageio.get_writer(f'{DIR}/result_comparison_texflip_lol_{"wireframe" if wireframe else ""}.mp4',
+                            mode='I', fps=30, codec='libx264', bitrate='16M')
 
-"""for i, obj in enumerate(objs):
-    if "basemesh" in obj:
-        continue
-    # get vertices
-    vertices = []
-    with open(os.path.join(DIR, obj), 'r') as f:"""
+v_f = torch.zeros(n_frames, dtype=torch.float32, device='cuda')
 
-for i in range(0, 120):
+for i in range(0, n_frames):
+
+    v_f[i] = 1.0
+
     vertices = []
     ref = np.array(Image.open(os.path.join(REFDIR, f"pod2colour_pod2texture_{i:03d}.tif")))
     ref = ref.reshape((ref.shape[0], ref.shape[1], 1))
@@ -102,8 +116,11 @@ for i in range(0, 120):
     proj = torch.from_numpy(projection).cuda(device='cuda')
     modelview = camera.extrinsic_to_modelview(rot, trans_calib)
     trans = torch.tensor(camera.translate(0.0, 0.0, 0.0), dtype=torch.float32, device='cuda')
+    rigid_trans_pose = camera.rigid_grad(torch.matmul(v_f, trans),
+                                         roma.unitquat_to_rotmat(torch.matmul(v_f, rot)))
     t_mv = torch.matmul(torch.from_numpy(modelview).cuda(device='cuda'), trans)
-    mvp = torch.matmul(proj, t_mv)
+    tr = torch.matmul(rigid_trans_pose, t_mv)
+    mvp = torch.matmul(proj, tr)
 
     vtx_pos_split = torch.reshape(vtx_pos, (vtx_pos.shape[0] // 3, 3))
     colour = render(glctx, mvp, vtx_pos_split, pos_idx, uv, uv_idx, tex, resolution) * 255.0
@@ -119,5 +136,7 @@ for i in range(0, 120):
     utils.display_image(result_image/255.0)
     # imageio.imwrite(f'{DIR}/frame{i}.png', img_col, format='png')
     writer.append_data(np.clip(np.rint(result_image), 0, 255).astype(np.uint8))
+
+    v_f[i] = 0.0
 
 writer.close()

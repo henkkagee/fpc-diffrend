@@ -2,6 +2,7 @@
 import os
 import json
 import random
+import codecs
 
 # 3rd party
 import numpy as np
@@ -231,7 +232,7 @@ def setup_dataset(localblpath, globalblpath, n_frames, n_vertices_x3, v_basemesh
 # -------------------------------------------------------------------------------------------------
 
 
-def save(meshes, uv, pos_idx, texture, texture_tensor, directory):
+def save(meshes, uv, pos_idx, texture, translation, rotation, directory):
     """
     Save the sequence of optimized meshes per frame.
 
@@ -239,7 +240,8 @@ def save(meshes, uv, pos_idx, texture, texture_tensor, directory):
     :param uv: Tensor of original UV coordinates
     :param pos_idx: Tensor of mesh faces (triangles)
     :param texture: Numpy array containing texture
-    :param texture_tensor: Tensor containing texture
+    :param translation: Tensor of shape (n_frames, 3) containing per-frame head xyz translation
+    :param rotation: Tensor of shape (n_frames, 4) containing per-frame head translations as quaternions
     :param directory: destination path to save to (str)
 
     :return:
@@ -269,6 +271,20 @@ def save(meshes, uv, pos_idx, texture, texture_tensor, directory):
         imageio.imwrite(os.path.join(directory, "texture.png"), (np.flip(texture, 0)*255).astype(np.uint8), format="png")
     except Exception as e:
         print(f"imageio failed with '{str(e)}'")
+
+    print(f"Saving head translation and rotation...")
+    try:
+        t = translation.cpu().detach().tolist()
+        r = rotation.cpu().detach().tolist()
+        dictobj = {'translation': t, 'rotation': r}
+        json.dump(dictobj, codecs.open(os.path.join(directory, 'pose.json'), 'w', encoding='utf-8'),
+                  separators=(',', ':'),
+                  sort_keys=True,
+                  indent=4)
+    except Exception as e:
+        print(str(e))
+    print("Everything saved successfully.")
+
 
 # -------------------------------------------------------------------------------------------------
 
@@ -445,6 +461,8 @@ def fitTake(max_iter,
                                       {"params": maps_intermediate['local'], 'lr': lr_base},
                                       {"params": t_opt, 'lr': lr_t},
                                       {"params": q_opt, 'lr': lr_q},
+                                      {"params": per_frame_t, 'lr': lr_t},
+                                      {"params": per_frame_q, 'lr': lr_q},
                                       {"params": tex_opt, 'lr': lr_base * lr_tex_coef}], lr=lr_base)
         scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer,
                                                       lr_lambda=lambda x: lr_ramp ** (
@@ -483,14 +501,14 @@ def fitTake(max_iter,
             # ref = utils.whiten(ref, whiten_mean, whiten_std)
 
 
-            ref_norm = lrn(ref.permute(0, 2, 1))
-            ref_norm = ref_norm.permute(0, 2, 1)
+            # ref_norm = lrn(ref.permute(0, 2, 1))
+            # ref_norm = ref_norm.permute(0, 2, 1)
             # smoothing = utils.GaussianSmoothing(1, 32, 1)
             # smoothing = smoothing.to('cuda')
             # ref_blur = smoothing(torch.reshape(ref_norm, (1, ref_norm.shape[2], ref_norm.shape[0], ref_norm.shape[1])))
             # ref_blur = blurrer(torch.reshape(ref, (1, 1600, 1200)))
 
-            # set one-hot frame index
+            # set one-hot frame- and camera indices
             v_f[frame_idx] = 1.0
             cam_idx_tensor[cam_idx] = 1.0
 
@@ -502,10 +520,13 @@ def fitTake(max_iter,
                                                       calib_lookup[cam_idx]['trans_calib'])
             trans = torch.tensor(camera.translate(0.0, 0.0, 0.0), dtype=torch.float32, device='cuda')
             t_mv = torch.matmul(torch.from_numpy(modelview).cuda(device='cuda'), trans)
-            rigid_trans = camera.rigid_grad(torch.matmul(cam_idx_tensor, t_opt) * 0.05,
+            rigid_trans = camera.rigid_grad(torch.matmul(cam_idx_tensor, t_opt),
                               roma.unitquat_to_rotmat(torch.matmul(cam_idx_tensor, q_opt)))
+            rigid_trans_pose = camera.rigid_grad(torch.matmul(v_f, per_frame_t),
+                                            roma.unitquat_to_rotmat(torch.matmul(v_f, per_frame_q)))
             tr = torch.matmul(rigid_trans, t_mv)
-            mvp = torch.matmul(proj, tr)
+            tr_pose = torch.matmul(rigid_trans_pose, tr)
+            mvp = torch.matmul(proj, tr_pose)
 
             # get blended vertex positions according to eq.
             # vtx_pos = blend(v_base, maps, maps_intermediate, datasets, v_f)
@@ -526,9 +547,9 @@ def fitTake(max_iter,
             # local contrast (response) normalization over channels to account for
             # lighting changes between reference and rendered image
             # torch local response norm needs channel dimension to be in dim 1
-            colour_norm = lrn(colour.permute(0, 2, 1))
+            # colour_norm = lrn(colour.permute(0, 2, 1))
             # permute back original shape from lrn shape requirements (need to have channel back in dim 2)
-            colour_norm = colour_norm.permute(0, 2, 1)
+            # colour_norm = colour_norm.permute(0, 2, 1)
             # blur before calculating pixel space loss using gaussian kernel of size 32
             # more tractable optimization landscape
             # built-in gaussian not available for torch tensors since we can't use the right torch3d version
@@ -567,9 +588,10 @@ def fitTake(max_iter,
             optimizer.step()
             scheduler.step()
 
-            # scale and normalize quaternion
+            # scale and normalize quaternionS
             with torch.no_grad():
                 q_opt /= torch.sum(q_opt ** 2) ** 0.5
+                per_frame_q /= torch.sum(per_frame_q ** 2) ** 0.5
 
             # Print loss logging
             log = (log_interval and (i % log_interval == 0))
@@ -602,7 +624,8 @@ def fitTake(max_iter,
         if writer is not None:
             writer.close()
 
-    save(result, uv, pos_idx, tex_opt.cpu().detach().clone().numpy(), tex_opt.cpu(), out_dir)
+    save(result, uv, pos_idx, tex_opt.cpu().detach().clone().numpy(),
+         per_frame_t.cpu(), per_frame_q.cpu(), out_dir)
 
     # save config file with settings
     with open(os.path.join(out_dir, "config.txt"), 'w') as f:

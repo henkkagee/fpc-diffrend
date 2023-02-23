@@ -44,25 +44,21 @@ def render(glctx, mtx, pos, pos_idx, uv, uv_idx, tex, resolution):
 
 # -------------------------------------------------------------------------------------------------
 
-optimname = "d120_justblends_final"
-wireframe = True
+optimname = "d120_moreposelearn"
+wireframe = False
 
 # Get objs
 REFDIR = r"C:\Users\Henrik\fpc-diffrend\data\reference\dialogue\scene1\take03\20201022_iv_s1_t3_p2col_r1\pod2colour_pod2texture"
 DIR = r"C:\Users\Henrik\fpc-diffrend\data\out\{}\result".format(optimname)
 objs = os.listdir(DIR)
 if wireframe:
-    texpath = os.path.join(DIR, "wireframe.png")
+    texpath = os.path.join(DIR, "ilkka_villi_anchor_greyscale_fix_wireframe.png")
 else:
     texpath = os.path.join(DIR, "texture.png")
 
-"""camNames = ["pod2colour_pod1primary", "pod2colour_pod1secondary", "pod2colour_pod1texture",
-            "pod2colour_pod2primary", "pod2colour_pod2secondary", "pod2colour_pod2texture",
-            "pod2colour_pod3primary", "pod2colour_pod3secondary", "pod2colour_pod3texture", ]"""
-
-camNames = ["pod3primary", "pod2primary", "pod1primary",
-            "pod3secondary", "pod2secondary", "pod1secondary",
-            "pod3texture", "pod2texture", "pod1texture", ]
+camNames = ["pod1secondary", "pod2secondary", "pod3secondary",
+            "pod1texture", "pod2texture", "pod3texture",
+            "pod1primary", "pod2primary", "pod3primary"]
 
 # common mesh info
 basemesh = data.MeshData(os.path.join(DIR, "basemesh.obj"))
@@ -72,7 +68,6 @@ uv_idx = torch.tensor(basemesh.fuv, dtype=torch.int32, device='cuda')
 tex = np.array(Image.open(texpath))/255.0
 tex = tex[..., np.newaxis]
 tex = np.flip(tex, 0)
-tex = np.flip(tex, 1)
 tex = torch.tensor(tex.copy(), dtype=torch.float32, device='cuda', requires_grad=True)
 resolution = (800, 600)
 
@@ -90,7 +85,7 @@ rot = np.asarray(calib['rotation'], dtype=np.float32)
 trans_calib = np.asarray(calib['translation'], dtype=np.float32)
 
 glctx = dr.RasterizeGLContext(device='cuda')
-writer = imageio.get_writer(f'{DIR}/result_multicam_{"wireframe" if wireframe else ""}.mp4', mode='I', fps=30, codec='libx264', bitrate='16M')
+writer = imageio.get_writer(f'{DIR}/result_multicams_{"wireframe" if wireframe else ""}.mp4', mode='I', fps=30, codec='libx264', bitrate='16M')
 
 """for i, obj in enumerate(objs):
     if "basemesh" in obj:

@@ -6,10 +6,10 @@ import fit
 
 def run():
     fit.fitTake(
-        max_iter=100000,
+        max_iter=150000,
         lr_base=10e-4,
         lr_tex_coef=0.5,
-        lr_ramp=0.01,
+        lr_ramp=0.005,
         lr_t=10e-5,
         lr_q=10e-5,
         basemeshpath=r"C:\Users\Henrik\fpc-diffrend\data\basemesh_patched_fixed_verts_and_uv.obj",
@@ -22,7 +22,7 @@ def run():
         enable_mip=False,
         max_mip_level=6,
         texshape=(1024, 1024, 1),
-        out_dir=r"C:\Users\Henrik\fpc-diffrend\data\out\d120_justblends_final",
+        out_dir=r"C:\Users\Henrik\fpc-diffrend\data\out\d120_blends_and_corrections",
         resolution=(1600, 1200),
         mp4_interval=50,
         texpath=r"C:\Users\Henrik\fpc-diffrend\data\texture_g_edit.png",
