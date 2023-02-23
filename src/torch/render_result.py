@@ -46,9 +46,10 @@ def render(glctx, mtx, pos, pos_idx, uv, uv_idx, tex, resolution):
 
 # -------------------------------------------------------------------------------------------------
 
-optimname = "d120_moreposelearn"
-wireframe = False
+optimname = "d120_combined_100000_quarterway_regularized"
+wireframe = True
 n_frames = 120
+reproduce_pose = True
 
 # Get objs
 REFDIR = r"C:\Users\Henrik\fpc-diffrend\data\reference\dialogue\scene1\take03\20201022_iv_s1_t3_p2col_r1\pod2colour_pod2texture"
@@ -87,11 +88,11 @@ trans_calib = np.asarray(calib['translation'], dtype=np.float32)
 # saved pose tensors
 obj_text = codecs.open(os.path.join(DIR, 'pose.json'), 'r', encoding='utf-8').read()
 dictobj = json.loads(obj_text)
-trans = torch.tensor(dictobj['translation'])
-rot = torch.tensor(dictobj['rotation'])
+pose_trans = torch.tensor(dictobj['translation'], device='cuda')
+pose_rot = torch.tensor(dictobj['rotation'], device='cuda')
 
 glctx = dr.RasterizeGLContext(device='cuda')
-writer = imageio.get_writer(f'{DIR}/result_comparison_texflip_lol_{"wireframe" if wireframe else ""}.mp4',
+writer = imageio.get_writer(f'{DIR}/result_comparison{"_wireframe" if wireframe else ""}{"_pose" if reproduce_pose else ""}.mp4',
                             mode='I', fps=30, codec='libx264', bitrate='16M')
 
 v_f = torch.zeros(n_frames, dtype=torch.float32, device='cuda')
@@ -116,11 +117,12 @@ for i in range(0, n_frames):
     proj = torch.from_numpy(projection).cuda(device='cuda')
     modelview = camera.extrinsic_to_modelview(rot, trans_calib)
     trans = torch.tensor(camera.translate(0.0, 0.0, 0.0), dtype=torch.float32, device='cuda')
-    rigid_trans_pose = camera.rigid_grad(torch.matmul(v_f, trans),
-                                         roma.unitquat_to_rotmat(torch.matmul(v_f, rot)))
+    rigid_trans_pose = camera.rigid_grad(torch.matmul(v_f, pose_trans),
+                                         roma.unitquat_to_rotmat(torch.matmul(v_f, pose_rot)))
     t_mv = torch.matmul(torch.from_numpy(modelview).cuda(device='cuda'), trans)
-    tr = torch.matmul(rigid_trans_pose, t_mv)
-    mvp = torch.matmul(proj, tr)
+    if reproduce_pose:
+        t_mv = torch.matmul(rigid_trans_pose, t_mv)
+    mvp = torch.matmul(proj, t_mv)
 
     vtx_pos_split = torch.reshape(vtx_pos, (vtx_pos.shape[0] // 3, 3))
     colour = render(glctx, mvp, vtx_pos_split, pos_idx, uv, uv_idx, tex, resolution) * 255.0

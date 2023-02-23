@@ -220,11 +220,11 @@ def setup_dataset(localblpath, globalblpath, n_frames, n_vertices_x3, v_basemesh
         datasets['local'] = m_3vb
 
         # mappings m1
-        m_bf_face = torch.zeros(n_frames, n_frames, dtype=torch.float32, device='cuda', requires_grad=True)
+        m_bf_face = torch.zeros(n_frames, n_frames, dtype=torch.float32, device='cuda', requires_grad=False)
         maps['local'] = m_bf_face
 
         # mappings m2
-        m_bf_face_intermediate = torch.eye(n_meshes, n_frames, dtype=torch.float32, device='cuda', requires_grad=True)
+        m_bf_face_intermediate = torch.eye(n_meshes, n_frames, dtype=torch.float32, device='cuda', requires_grad=False)
         maps_intermediate['local'] = m_bf_face_intermediate
 
     return datasets, maps, maps_intermediate, torch.zeros(n_frames, dtype=torch.float32, device='cuda')
@@ -349,7 +349,10 @@ def fitTake(max_iter,
             whiten_mean=50,
             whiten_std=25,
             texpath="",
-            maskpath=""):
+            maskpath="",
+            mode="",
+            combined_corrective_coefficient=1.0,
+            regularize_correctives=False):
     """
     Fit one take (continuous range of frames).
 
@@ -384,10 +387,18 @@ def fitTake(max_iter,
     :param weight_normalconsistency: Weight coefficient in loss function for mesh normal consistency
     :param whiten_mean: Mean value to use for reference image whitening
     :param whiten_std: Standard deviation value to use for reference image whitening
+    :param mode: str (prior, free, combined) mode string that determines what mesh data to optimize
+    :param combined_corrective_coefficient: Float 0.0 <= x <= 1.0, weight coefficient for learned corrective shapes in combined mode
+    :param regularize_correctives: Bool whether to regularize learned corrective deformations with L2 loss
     :return:
     """
 
     args = locals()
+
+    validmodes = ['prior', 'free', 'combined']
+    if mode not in validmodes:
+        print(f"No valid mode ('{mode}') selected from valid configurations ({validmodes})")
+        return
 
     # miscellaneous setup
     if mp4_interval:
@@ -440,8 +451,26 @@ def fitTake(max_iter,
 
         # blendshapes and mappings
         n_vertices_x3 = v_base.shape[0]
-        datasets, maps, maps_intermediate, v_f = setup_dataset(localblpath, globalblpath, n_frames, n_vertices_x3, basemesh.vertices)
+        datasets, maps, maps_intermediate, v_f = setup_dataset(localblpath, globalblpath, n_frames, n_vertices_x3,
+                                                               basemesh.vertices)
         m1, m2, m3, v_f = setup_dataset_free(n_frames, n_vertices_x3)
+
+        corrective_lr = lr_base
+        if mode == "prior":
+            maps['local'].requires_grad = True
+            maps_intermediate['local'].requires_grad = True
+            blendFunction = blend
+        elif mode == "free":
+            m1.requires_grad = True
+            m2.requires_grad = True
+            m3.requires_grad = True
+            blendFunction = blend_free
+        elif mode == "combined":
+            # start learning corrective shapes after optimizing halfway
+            maps['local'].requires_grad = True
+            maps_intermediate['local'].requires_grad = True
+            blendFunction = blend_combined
+            corrective_lr = lr_base * 0.1
 
         # context and optimizer
         print("Setting up RasterizeGLContext and optimizer...")
@@ -454,9 +483,9 @@ def fitTake(max_iter,
                                       {"params": q_opt, 'lr': 10e-4 * 0.1},
                                       {"params": tex_opt, 'lr': 10e-5 * 0.5, 'weight_decay': 0.0}],
                                      lr=lr_base, weight_decay=10e-1)"""
-        optimizer = torch.optim.Adam([{"params": m1, 'lr': lr_base},
-                                      {"params": m2, 'lr': lr_base},
-                                      {"params": m3, 'lr': lr_base},
+        optimizer = torch.optim.Adam([{"params": m1, 'lr': corrective_lr},
+                                      {"params": m2, 'lr': corrective_lr},
+                                      {"params": m3, 'lr': corrective_lr},
                                       {"params": maps['local'], 'lr': lr_base},
                                       {"params": maps_intermediate['local'], 'lr': lr_base},
                                       {"params": t_opt, 'lr': lr_t},
@@ -529,8 +558,13 @@ def fitTake(max_iter,
             mvp = torch.matmul(proj, tr_pose)
 
             # get blended vertex positions according to eq.
-            # vtx_pos = blend(v_base, maps, maps_intermediate, datasets, v_f)
-            vtx_pos = blend_combined(v_base, m1, m2, m3, maps, maps_intermediate, datasets, v_f)
+            if mode == "prior":
+                vtx_pos = blend(v_base, maps, maps_intermediate, datasets, v_f)
+            elif mode == "free":
+                vtx_pos = blend_free(v_base, m1, m2, m3, v_f)
+            elif mode == "combined":
+                vtx_pos = blend_combined(v_base, m1, m2, m3, maps, maps_intermediate,
+                                         datasets, v_f, learned_coefficient=0.5)
             # split [n_vertices * 3] to [n_vertices, 3] as a view of the original tensor
             vtx_pos_split = torch.reshape(vtx_pos, (vtx_pos.shape[0] // 3, 3))
 
@@ -565,6 +599,12 @@ def fitTake(max_iter,
                     weight_laplacian*laplacian(loss_mesh)**2 + \
                     weight_normalconsistency*mnc(loss_mesh) #+  \
                     # torch.mean(torch.sum(torch.matmul(m2, m1) ** 2, dim=0))
+            if regularize_correctives and mode == "combined" and i > max_iter/2:
+                # regularize the learned corrective deformations
+                mapped = torch.matmul(m1, v_f)
+                basis = torch.matmul(m2, mapped)
+                deformations = torch.matmul(m3, basis)
+                loss += torch.mean(deformations ** 2)
 
             with torch.no_grad():
                 if not i % 500:
@@ -582,6 +622,12 @@ def fitTake(max_iter,
                 m2.requires_grad = False
                 m3.requires_grad = False"""
 
+            if mode == "combined":
+                # start learning corrective shapes after optimizing halfway
+                if i > max_iter/2:
+                    m1.requires_grad = True
+                    m2.requires_grad = True
+                    m3.requires_grad = True
 
             optimizer.zero_grad()
             loss.backward()
