@@ -46,7 +46,7 @@ def render(glctx, mtx, pos, pos_idx, uv, uv_idx, tex, resolution):
 
 # -------------------------------------------------------------------------------------------------
 
-optimname = "d120_blends_and_corrections"
+optimname = "d120_prior_1200000_hmc_yoffset"
 wireframe = True
 n_frames = 120
 reproduce_pose = True
@@ -134,7 +134,7 @@ for i in range(0, 120):
         projection = camera.intrinsic_to_projection(intr)
         proj = torch.from_numpy(projection).cuda(device='cuda')
         modelview = camera.extrinsic_to_modelview(rot, trans_calib)
-        trans = torch.tensor(camera.translate(0.0, 0.0, 0.0), dtype=torch.float32, device='cuda')
+        trans = torch.tensor(camera.translate(0.0, 170.0, 0.0), dtype=torch.float32, device='cuda')
         rigid_trans_pose = camera.rigid_grad(torch.matmul(v_f, pose_trans),
                                              roma.unitquat_to_rotmat(torch.matmul(v_f, pose_rot)))
         t_mv = torch.matmul(torch.from_numpy(modelview).cuda(device='cuda'), trans)

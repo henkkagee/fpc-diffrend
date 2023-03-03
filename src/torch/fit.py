@@ -352,7 +352,8 @@ def fitTake(max_iter,
             maskpath="",
             mode="",
             combined_corrective_coefficient=1.0,
-            regularize_correctives=False):
+            regularize_correctives=False,
+            regularize_prior=False):
     """
     Fit one take (continuous range of frames).
 
@@ -390,6 +391,7 @@ def fitTake(max_iter,
     :param mode: str (prior, free, combined) mode string that determines what mesh data to optimize
     :param combined_corrective_coefficient: Float 0.0 <= x <= 1.0, weight coefficient for learned corrective shapes in combined mode
     :param regularize_correctives: Bool whether to regularize learned corrective deformations with L2 loss
+    :param regularize_prior: Bool whether to regularize rig prior activations with L2 loss
     :return:
     """
 
@@ -515,7 +517,9 @@ def fitTake(max_iter,
 
         # start camera & frame iteration
         for i in range(max_iter):
-            cam_idx = random.randint(0, 8)
+            # cam_idx = random.randint(0, 8)
+            cam_idxs = [0, 2, 3, 5, 6, 8]
+            cam_idx = random.choice(cam_idxs)
             frame_idx = random.randint(0, n_frames-1)
 
             # reference image to render against
@@ -547,7 +551,7 @@ def fitTake(max_iter,
             proj = torch.from_numpy(projection).cuda(device='cuda')
             modelview = camera.extrinsic_to_modelview(calib_lookup[cam_idx]['rot'],
                                                       calib_lookup[cam_idx]['trans_calib'])
-            trans = torch.tensor(camera.translate(0.0, 0.0, 0.0), dtype=torch.float32, device='cuda')
+            trans = torch.tensor(camera.translate(0.0, 170.0, 0.0), dtype=torch.float32, device='cuda')
             t_mv = torch.matmul(torch.from_numpy(modelview).cuda(device='cuda'), trans)
             rigid_trans = camera.rigid_grad(torch.matmul(cam_idx_tensor, t_opt),
                               roma.unitquat_to_rotmat(torch.matmul(cam_idx_tensor, q_opt)))
@@ -605,6 +609,11 @@ def fitTake(max_iter,
                 basis = torch.matmul(m2, mapped)
                 deformations = torch.matmul(m3, basis)
                 loss += torch.mean(deformations ** 2)
+
+            if regularize_prior and mode == "prior":
+                mapped = torch.matmul(maps['local'], v_f)
+                mapped_intermediate = torch.matmul(maps_intermediate['local'], mapped)
+                loss += torch.mean(mapped_intermediate ** 2)
 
             with torch.no_grad():
                 if not i % 500:
