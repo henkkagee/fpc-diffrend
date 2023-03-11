@@ -20,9 +20,9 @@ Image heatmap comparisons
 
 def compareSequence(inferred_dir, reference_dir, save_dir):
 
+    Path(save_dir).mkdir(parents=True, exist_ok=True)
     writer = imageio.get_writer(f'{save_dir}/comparison_col.mp4',
                                 mode='I', fps=30, codec='libx264', bitrate='16M')
-    Path(save_dir).mkdir(parents=True, exist_ok=True)
     comp = np.zeros((1600, 1200, 3), dtype=np.uint8)
 
     for i in range(120):
@@ -46,8 +46,8 @@ def compareSequence(inferred_dir, reference_dir, save_dir):
         imageio.imwrite(f'{save_dir}/colcomp_{i}.png', comp_save, format='png')
         writer.append_data(comp_save)
 
-MYDIR = r"W:\thesis\results\safe\d120_prior_1200000_yoffset\result"
+MYDIR = r"W:\thesis\results\safe\d120_prior_1200000_hmc_yoffset\result"
 REFDIR = r"W:\thesis\results\reference\d120\pod2colour_pod2texture"
-SAVEDIR = r"W:\thesis\results\safe\d120_prior_1200000_yoffset\result\comp"
+SAVEDIR = r"W:\thesis\results\safe\d120_prior_1200000_hmc_yoffset\result\comp"
 
 compareSequence(MYDIR, REFDIR, SAVEDIR)
