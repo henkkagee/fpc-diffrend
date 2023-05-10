@@ -6,7 +6,7 @@ import fit
 
 def run():
     fit.fitTake(
-        max_iter=120000,
+        max_iter=80000,
         lr_base=10e-4,
         lr_tex_coef=0.5,
         lr_ramp=0.005,
@@ -17,12 +17,12 @@ def run():
         globalblpath="",
         display_interval=50,
         log_interval=50,
-        imdir=r"C:\Users\Henrik\fpc-diffrend\data\reference\dialogue\scene1\take03\20201022_iv_s1_t3_p2col_r1",
+        imdir=r"C:\Users\Henrik\fpc-diffrend\data\reference\rom\20191106_ilkvil_ML_ROM_take0001_pod2colour_range03",
         calibpath=r"C:\Users\Henrik\fpc-diffrend\calibration\combined\calibration.json",
         enable_mip=False,
         max_mip_level=6,
         texshape=(1024, 1024, 1),
-        out_dir=r"C:\Users\Henrik\fpc-diffrend\data\out\d120_prior_1200000_yoffset_regularize",
+        out_dir=r"C:\Users\Henrik\fpc-diffrend\data\out\ROM2_100000_9cams_prior_yoffset",
         resolution=(1600, 1200),
         mp4_interval=200,
         texpath=r"C:\Users\Henrik\fpc-diffrend\data\texture_g_edit.png",
@@ -39,7 +39,7 @@ def run():
         mode="prior",
         combined_corrective_coefficient=0.5,
         regularize_correctives=False,
-        regularize_prior=True
+        regularize_prior=False
     )
 
 # -----------------------------------------------------------

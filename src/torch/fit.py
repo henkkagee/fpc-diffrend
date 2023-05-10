@@ -420,6 +420,8 @@ def fitTake(max_iter,
         # basemesh
         basemesh = data.MeshData(basemeshpath)
         v_base = torch.tensor(basemesh.vertices, dtype=torch.float32, device='cuda')
+        print(f"vertices = {basemesh.vertices.size}")
+        return
         v_base_split = torch.reshape(v_base, (v_base.shape[0] // 3, 3))
         pos_idx = torch.tensor(basemesh.faces, dtype=torch.int32, device='cuda')
         v_base_loss_mesh = meshes.Meshes(verts=[v_base_split], faces=[pos_idx]).cuda()
@@ -610,6 +612,7 @@ def fitTake(max_iter,
                 deformations = torch.matmul(m3, basis)
                 loss += torch.mean(deformations ** 2)
 
+            # todo: add a loss term to reward pose optimization w.r.t. blendshape activations
             if regularize_prior and mode == "prior":
                 mapped = torch.matmul(maps['local'], v_f)
                 mapped_intermediate = torch.matmul(maps_intermediate['local'], mapped)

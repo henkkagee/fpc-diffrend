@@ -46,13 +46,15 @@ def render(glctx, mtx, pos, pos_idx, uv, uv_idx, tex, resolution):
 
 # -------------------------------------------------------------------------------------------------
 
-optimname = "d120_prior_1200000_hmc_yoffset"
+# names = ["groundtruth_yoffset"]
+
+optimname = "d120_combined_150000_heavier_laplacian_2"
 wireframe = True
 n_frames = 120
 reproduce_pose = True
 
 # Get objs
-REFDIR = r"C:\Users\Henrik\fpc-diffrend\data\reference\dialogue\scene1\take03\20201022_iv_s1_t3_p2col_r1\pod2colour_pod2texture"
+REFDIR = r"C:\Users\Henrik\fpc-diffrend\data\reference\rom\20191106_ilkvil_ML_ROM_take0001_pod2colour_range01\range01_pod2primary"
 DIR = r"C:\Users\Henrik\fpc-diffrend\data\out\{}\result".format(optimname)
 objs = os.listdir(DIR)
 if wireframe:
@@ -89,10 +91,11 @@ rot = np.asarray(calib['rotation'], dtype=np.float32)
 trans_calib = np.asarray(calib['translation'], dtype=np.float32)
 
 # saved pose tensors
-obj_text = codecs.open(os.path.join(DIR, 'pose.json'), 'r', encoding='utf-8').read()
-dictobj = json.loads(obj_text)
-pose_trans = torch.tensor(dictobj['translation'], device='cuda')
-pose_rot = torch.tensor(dictobj['rotation'], device='cuda')
+if reproduce_pose:
+    obj_text = codecs.open(os.path.join(DIR, 'pose.json'), 'r', encoding='utf-8').read()
+    dictobj = json.loads(obj_text)
+    pose_trans = torch.tensor(dictobj['translation'], device='cuda')
+    pose_rot = torch.tensor(dictobj['rotation'], device='cuda')
 
 glctx = dr.RasterizeGLContext(device='cuda')
 writer = imageio.get_writer(f'{DIR}/result_multicams{"_wireframe" if wireframe else ""}{"_pose" if reproduce_pose else ""}.mp4', mode='I', fps=30, codec='libx264', bitrate='16M')
@@ -134,8 +137,9 @@ for i in range(0, 120):
         projection = camera.intrinsic_to_projection(intr)
         proj = torch.from_numpy(projection).cuda(device='cuda')
         modelview = camera.extrinsic_to_modelview(rot, trans_calib)
-        trans = torch.tensor(camera.translate(0.0, 170.0, 0.0), dtype=torch.float32, device='cuda')
-        rigid_trans_pose = camera.rigid_grad(torch.matmul(v_f, pose_trans),
+        trans = torch.tensor(camera.translate(0.0, 0.0, 0.0), dtype=torch.float32, device='cuda')
+        if reproduce_pose:
+            rigid_trans_pose = camera.rigid_grad(torch.matmul(v_f, pose_trans),
                                              roma.unitquat_to_rotmat(torch.matmul(v_f, pose_rot)))
         t_mv = torch.matmul(torch.from_numpy(modelview).cuda(device='cuda'), trans)
         if reproduce_pose:
@@ -153,10 +157,11 @@ for i in range(0, 120):
         imgs.append(img_col)
 
     # result_image = utils.make_img(img_col)
-    # result_image = utils.make_img(np.stack([ref, img_col]))
+    # result_image = utils.make_img(np.stack([img_col]))
     result_image = utils.make_img(np.stack(imgs), ncols=3)
+    img_col_save = np.clip(np.rint(result_image), 0, 255).astype(np.uint8)
     utils.display_image(result_image/255.0)
-    # imageio.imwrite(f'{DIR}/frame{i}.png', img_col, format='png')
+    imageio.imwrite(f'{DIR}/frame{i}.png', result_image, format='png')
     writer.append_data(np.clip(np.rint(result_image), 0, 255).astype(np.uint8))
 
     v_f[i] = 0.0

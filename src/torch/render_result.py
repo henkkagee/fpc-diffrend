@@ -46,11 +46,14 @@ def render(glctx, mtx, pos, pos_idx, uv, uv_idx, tex, resolution):
 
 # -------------------------------------------------------------------------------------------------
 
-names = ["d120_prior_1200000_yoffset_nobayer", "d120_prior_1200000_yoffset", "d120_prior_1200000_hmc_yoffset",
-         "d120_100000_free_heavy_laplacian", "d120_combined_150000_heavier_laplacian_2"]
+names = ["d120_prior_1200000_hmc_yoffset"]
 
 for optimname in names:
     print(optimname)
+    if "yoffset" in optimname:
+        offset = 170.0
+    else:
+        offset = 0
     # optimname = "d120_prior_1200000_yoffset_regularize"
     wireframe = True
     n_frames = 120
@@ -58,12 +61,12 @@ for optimname in names:
     write_imgs = False
 
     # Get objs
-    REFDIR = r"C:\Users\Henrik\fpc-diffrend\data\reference\dialogue\scene1\take03\20201022_iv_s1_t3_p2col_r1\pod2colour_pod2texture"
+    REFDIR = r"C:\Users\Henrik\fpc-diffrend\data\reference\dialogue\scene1\take03\20201022_iv_s1_t3_p2col_r1\pod2colour_pod2primary"
     DIR = r"C:\Users\Henrik\fpc-diffrend\data\out\{}\result".format(optimname)
     objs = os.listdir(DIR)
 
     if wireframe:
-        texpath = os.path.join(DIR, "ilkka_villi_anchor_greyscale_fix_wireframe.png")
+        texpath = os.path.join(DIR, "ilkka_villi_anchor_greyscale_fix_eyes_wireframe_transparency_2.png")
     else:
         texpath = os.path.join(DIR, "texture.png")
 
@@ -82,7 +85,7 @@ for optimname in names:
 
     # get camera calibration
     calibpath = r"C:\Users\Henrik\fpc-diffrend\calibration\combined\calibration.json"
-    cam = "pod2texture"
+    cam = "pod2primary"
     with open(calibpath) as json_file:
         calibs = json.load(json_file)
     calib = calibs[cam]
@@ -92,13 +95,14 @@ for optimname in names:
     trans_calib = np.asarray(calib['translation'], dtype=np.float32)
 
     # saved pose tensors
-    obj_text = codecs.open(os.path.join(DIR, 'pose.json'), 'r', encoding='utf-8').read()
-    dictobj = json.loads(obj_text)
-    pose_trans = torch.tensor(dictobj['translation'], device='cuda')
-    pose_rot = torch.tensor(dictobj['rotation'], device='cuda')
+    if reproduce_pose:
+        obj_text = codecs.open(os.path.join(DIR, 'pose.json'), 'r', encoding='utf-8').read()
+        dictobj = json.loads(obj_text)
+        pose_trans = torch.tensor(dictobj['translation'], device='cuda')
+        pose_rot = torch.tensor(dictobj['rotation'], device='cuda')
 
     glctx = dr.RasterizeGLContext(device='cuda')
-    writer = imageio.get_writer(f'{DIR}/result_comparison{"_wireframe" if wireframe else ""}{"_pose" if reproduce_pose else ""}.mp4',
+    writer = imageio.get_writer(f'{DIR}/result_comparison{"_wireframe" if wireframe else ""}{"_pose" if reproduce_pose else ""}_trans.mp4',
                                 mode='I', fps=30, codec='libx264', bitrate='16M')
 
     v_f = torch.zeros(n_frames, dtype=torch.float32, device='cuda')
@@ -108,7 +112,7 @@ for optimname in names:
         v_f[i] = 1.0
 
         vertices = []
-        ref = np.array(Image.open(os.path.join(REFDIR, f"pod2colour_pod2texture_{i:03d}.tif")))
+        ref = np.array(Image.open(os.path.join(REFDIR, f"pod2colour_pod2primary_{i:03}.tif")))
         ref = ref.reshape((ref.shape[0], ref.shape[1], 1))
         with open(os.path.join(DIR, f"{i}.obj"), 'r') as f:
             for line in f:
@@ -122,8 +126,9 @@ for optimname in names:
         projection = camera.intrinsic_to_projection(intr)
         proj = torch.from_numpy(projection).cuda(device='cuda')
         modelview = camera.extrinsic_to_modelview(rot, trans_calib)
-        trans = torch.tensor(camera.translate(0.0, 170.0, 0.0), dtype=torch.float32, device='cuda')
-        rigid_trans_pose = camera.rigid_grad(torch.matmul(v_f, pose_trans),
+        trans = torch.tensor(camera.translate(0.0, offset, 0.0), dtype=torch.float32, device='cuda')
+        if reproduce_pose:
+            rigid_trans_pose = camera.rigid_grad(torch.matmul(v_f, pose_trans),
                                              roma.unitquat_to_rotmat(torch.matmul(v_f, pose_rot)))
         t_mv = torch.matmul(torch.from_numpy(modelview).cuda(device='cuda'), trans)
         if reproduce_pose:
@@ -143,7 +148,8 @@ for optimname in names:
         result_image = utils.make_img(np.stack([ref, img_col]))
         utils.display_image(result_image/255.0)
         if write_imgs:
-            imageio.imwrite(f'{DIR}/frame{i}{"_wireframe" if wireframe else ""}{"_pose" if reproduce_pose else ""}.png', img_col, format='png')
+            img_col_save = np.clip(np.rint(img_col), 0, 255).astype(np.uint8)
+            imageio.imwrite(f'{DIR}/frame{i}{"_wireframe" if wireframe else ""}{"_pose" if reproduce_pose else ""}.png', img_col_save, format='png')
         writer.append_data(np.clip(np.rint(result_image), 0, 255).astype(np.uint8))
 
         v_f[i] = 0.0
