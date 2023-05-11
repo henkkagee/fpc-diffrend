@@ -119,8 +119,8 @@ def q_to_mtx(q):
     r1 = torch.stack([2.0*q[0]*q[1] + 2.0*q[2]*q[3], 1.0 - 2.0*q[0]**2 - 2.0*q[2]**2, 2.0*q[1]*q[2] - 2.0*q[0]*q[3]])
     r2 = torch.stack([2.0*q[0]*q[2] - 2.0*q[1]*q[3], 2.0*q[1]*q[2] + 2.0*q[0]*q[3], 1.0 - 2.0*q[0]**2 - 2.0*q[1]**2])
     rr = torch.transpose(torch.stack([r0, r1, r2]), 1, 0)
-    rr = torch.cat([rr, torch.tensor([[0], [0], [0]], dtype=torch.float32).cuda()], dim=1) # Pad right column.
-    rr = torch.cat([rr, torch.tensor([[0, 0, 0, 1]], dtype=torch.float32).cuda()], dim=0)  # Pad bottom row.
+    rr = torch.cat([rr, torch.tensor([[0], [0], [0]], dtype=torch.float32).cuda(device='cuda')], dim=1) # Pad right column.
+    rr = torch.cat([rr, torch.tensor([[0, 0, 0, 1]], dtype=torch.float32).cuda(device='cuda')], dim=0)  # Pad bottom row.
     return rr
 
 # ----------------------------------------------------------------------------
@@ -217,8 +217,8 @@ def fit_pose(max_iter           = 10000,
             # reference image to render against
             img = np.array(Image.open(os.path.join(camdir, frame)))
             img = cv2.undistort(img, intr, dist)
-            # ref = torch.from_numpy(np.flip(img, 0).copy()).cuda()
-            ref = torch.from_numpy(img).cuda()
+            # ref = torch.from_numpy(np.flip(img, 0).copy()).cuda(device='cuda')
+            ref = torch.from_numpy(img).cuda(device='cuda')
 
             # lens distortion handled as preprocess in reference images
             projection = torch.tensor(camera.intrinsic_to_projection(intr), dtype=torch.float32, device='cuda')
@@ -315,7 +315,7 @@ def main():
         repeats=1,
         log_interval=10,
         display_interval=5,
-        out_dir=r"C:/Users/Henkka/Projects/fpc-diffrend/data/out_img/cube2",
+        out_dir=r"C:/Users/Henrik/fpc-diffrend/data/out/cube2",
         log_fn='log.txt',
         mp4save_interval=10,
         mp4save_fn='progress.mp4',

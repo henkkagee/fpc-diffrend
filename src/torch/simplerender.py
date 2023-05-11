@@ -64,7 +64,7 @@ def simple_render():
         texc, _ = dr.interpolate(uv[None, ...], rast, uv_idx)
         colour = dr.texture(tex[None, ...], texc, filter_mode='linear')
         colour = dr.antialias(colour, rast, pos_clip, tri)
-        colour = torch.where(rast[..., 3:] > 0, colour, torch.tensor(0.0).cuda())
+        colour = torch.where(rast[..., 3:] > 0, colour, torch.tensor(0.0).cuda(device='cuda'))
 
         img = colour.cpu().numpy()[0, ::-1, :, :] # Flip vertically due to opengl standards
 

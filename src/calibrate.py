@@ -89,8 +89,8 @@ calibdict = {}
 imgpoints = []  # 2d points in image plane.
 img = None
 prevcamname = "pod1primary"
-path = "C:/Users/Henkka/Projects/fpc-diffrend/data/calibration/combined/extracted"
-# path = "C:/Users/Henkka/Projects/fpc-diffrend/data/calibration/2021-07-01"
+path = "C:/Users/Henrik/fpc-diffrend/calibration/combined/extracted"
+# path = "C:/Users/Henrik/fpc-diffrend/calibration/2021-07-01"
 # path = r"\\rmd.remedy.fi\Capture\System\RAW\Calibrations\2021-12-07"
 images = os.listdir(path)
 
@@ -155,7 +155,7 @@ realcamname = changeCamName(prevcamname)
 calibdict[realcamname] = calibrate(objpoints, imgpoints, img, [x for x in xml_cams if x.get('name') == camname+"_0001"][0])
 
 # save calibration file
-json.dump(calibdict, codecs.open("C:/Users/Henkka/Projects/fpc-diffrend/data/calibration/combined/calibration_noblur.json",
+json.dump(calibdict, codecs.open("C:/Users/Henrik/fpc-diffrend/calibration/combined/calibration_noblur.json",
                                  'w', encoding='utf-8'),
           separators=(',', ':'),
           sort_keys=True,

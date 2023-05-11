@@ -1,15 +1,22 @@
 # builtin
 import os
 import json
+import random
+import codecs
 
 # 3rd party
 import numpy as np
-import torch
-from torch.nn.functional import conv2d
-import nvdiffrast.torch as dr
 from PIL import Image
 import roma as roma
 import imageio
+import torch
+import nvdiffrast.torch as dr
+import torchvision.utils
+import torchvision.transforms as transforms
+import pytorch3d.structures.meshes as meshes
+import pytorch3d.loss.mesh_laplacian_smoothing as laplacian
+import pytorch3d.loss.mesh_edge_loss as mel
+import pytorch3d.loss.mesh_normal_consistency as mnc
 
 # local
 import src.torch.data as data
@@ -33,24 +40,91 @@ def assertNumFrames(cams, imdir):
         frames = os.listdir(camdir)
         n_frames.append(len(frames))
     assert not any([x != n_frames[0] for x in n_frames]), "All cameras do not have the same number of frames!"
-    return n_frames[0]
+    return (n_frames[0], 2) if n_frames[0] < 100 else (n_frames[0], 3)
 
 # -------------------------------------------------------------------------------------------------
 
+def blend_free(v_base, m1, m2, m3, frames):
+    """
+    Get blended vertex positions from decomposed matrix of vertex positions
+    :param v_base: Base mesh vertex positions of shape [3*v], (x,y,z,x,...)
+    :param m1: Mapping from frames to learned vertex deltas
+    :param m2: Mapping from frames to learned vertex deltas
+    :param m3: Learned basis of vertex deltas
+    :param frames: One-hot vector of frame index, with value at frame i being 1.
+    :return: Blended mesh vertex positions of shape [3*v], (x,y,z,x,...)
+    """
 
-def blend(v_base, maps, dataset, frames):
+    mapped = torch.matmul(m1, frames)
+    basis = torch.matmul(m2, mapped)
+    prod = torch.matmul(m3, basis)
+    vtx_pos = torch.add(v_base, prod)
+    return vtx_pos
+
+# -------------------------------------------------------------------------------------------------
+
+def blend_combined(v_base, m1, m2, m3, maps, maps_intermediate, datasets, frames, learned_coefficient=1.0):
+    """
+        Get blended vertex positions from decomposed matrix of vertex positions combined with rig prior
+
+        :param v_base: Base mesh vertex positions of shape [3*v], (x,y,z,x,...)
+        :param m1: Mapping from frames to learned vertex deltas
+        :param m2: Mapping from frames to learned vertex deltas
+        :param m3: Learned basis of vertex deltas
+
+        :param maps: Dict of mappings, one mapping for each dataset: local, global, pca. Shape (n_frames, n_frames)
+        :param maps_intermediate: Dict of intermediate mappings, similar as param maps but of shape (n_blendshapes, n_frames)
+        :param dataset: Dict of datasets (blendshapes): local, global, pca. Shape (3*n_vertices, n_blendshapes)
+
+        :param frames: One-hot vector of frame index, with value at frame i being 1.
+        :param learned_coefficient: Coefficient for weight of learned shape basis
+
+        :return: Blended mesh vertex positions of shape [3*v], (x,y,z,x,...)
+
+    """
+
+    # Decompose vertex positions into a matrix product to make optimization landscape more tractable.
+    # Hence, matrices mapped and mapped_intermediate for feeding one-hot frame tensor into blendshape dataset
+    mapped = torch.matmul(maps['local'], frames)
+    mapped_intermediate = torch.matmul(maps_intermediate['local'], mapped)
+    bl_res = torch.matmul(datasets['local'], mapped_intermediate)
+
+    # learned basis and mapping matrices from Laine et al.
+    mapped = torch.matmul(m1, frames)
+    basis = torch.matmul(m2, mapped)
+    prod = torch.matmul(m3, basis)
+
+    vtx_pos = torch.add(v_base, bl_res)
+    vtx_pos = torch.add(vtx_pos, learned_coefficient*prod)
+    return vtx_pos
+
+# -------------------------------------------------------------------------------------------------
+
+def blend(v_base, maps, maps_intermediate, dataset, frames):
     """
     Get blended vertex positions as in rig eq.
 
     :param v_base: Base mesh vertex positions of shape [3*v], (x,y,z,x,...)
-    :param maps: Dict of mappings, one mapping for each dataset: local, global, pca
-    :param dataset: Dict of datasets (blendshapes): local, global, pca
+    :param maps: Dict of mappings, one mapping for each dataset: local, global, pca. Shape (n_frames, n_frames)
+    :param maps_intermediate: Dict of intermediate mappings, similar as param maps but of shape (n_blendshapes, n_frames)
+    :param dataset: Dict of datasets (blendshapes): local, global, pca. Shape (3*n_vertices, n_blendshapes)
     :param frames: One-hot vector of frame index, with value at frame i being 1.
     :return: Blended mesh vertex positions of shape [3*v], (x,y,z,x,...)
     """
+
     if 'global' not in dataset:
+        # Decompose vertex positions into a matrix product to make optimization landscape more tractable.
+        # Hence, matrices mapped and mapped_intermediate for feeding one-hot frame tensor into blendshape dataset
+        mapped = torch.matmul(maps['local'], frames)
+        mapped_intermediate = torch.matmul(maps_intermediate['local'], mapped)
+        bl_res = torch.matmul(dataset['local'], mapped_intermediate)
+        vtx_pos = torch.add(v_base, bl_res)
+        return vtx_pos
+    else:
         mapped = torch.matmul(maps['local'], frames)
         bl_res = torch.matmul(dataset['local'], mapped)
+
+        # blend with ml cache expressions through vertex masks on mouth and eyes
         vtx_pos = torch.add(v_base, bl_res)
         return vtx_pos
 
@@ -84,11 +158,27 @@ def render(glctx, mtx, pos, pos_idx, uv, uv_idx, tex, resolution, enable_mip, ma
         colour = dr.texture(tex[None, ...], texc, filter_mode='linear')
 
     colour = dr.antialias(colour, rast_out, pos_clip, pos_idx)
-    colour = torch.where(rast_out[..., 3:] > 0, colour, torch.tensor(45.0 / 255.0).cuda())
+    colour = torch.where(rast_out[..., 3:] > 0, colour, torch.tensor(45.0 / 255.0).cuda(device='cuda'))
     return colour[0]
 
 # -------------------------------------------------------------------------------------------------
 
+def setup_dataset_free(n_frames, n_vertices_x3):
+    """
+    Set up dataset of vertex matrix decomposition with v_i = v_base + m3*m2*m1*frames.
+    m3 can be seen as the learned basis for mesh deltas, m1 and m2 as mapping from frame index to this
+    basis. Finding the geometry in optimization thus corresponds to finding values for m1, m2 and m3.
+    :return:
+    """
+
+    m1 = torch.eye(n_frames, dtype=torch.float32, device='cuda', requires_grad=False)
+    m2 = torch.eye(n_frames, dtype=torch.float32, device='cuda', requires_grad=False)
+    m3 = torch.zeros((n_vertices_x3, n_frames), dtype=torch.float32, device='cuda', requires_grad=False)
+
+    return m1, m2, m3, torch.zeros(n_frames, dtype=torch.float32, device='cuda')
+
+
+# -------------------------------------------------------------------------------------------------
 
 def setup_dataset(localblpath, globalblpath, n_frames, n_vertices_x3, v_basemesh):
     """
@@ -101,6 +191,8 @@ def setup_dataset(localblpath, globalblpath, n_frames, n_vertices_x3, v_basemesh
     """
     datasets = {}
     maps = {}
+    maps_intermediate = {}
+
     if globalblpath != "":
         raise Exception("Blending global blendshapes from ml dataset caches not yet implemented")
     if localblpath != "":
@@ -127,22 +219,29 @@ def setup_dataset(localblpath, globalblpath, n_frames, n_vertices_x3, v_basemesh
         m_3vb = torch.tensor(localbl.transpose(), dtype=torch.float32, device='cuda')
         datasets['local'] = m_3vb
 
-        # mappings
-        m_bf_face = torch.zeros(n_meshes, n_frames, dtype=torch.float32, device='cuda', requires_grad=True)
+        # mappings m1
+        m_bf_face = torch.zeros(n_frames, n_frames, dtype=torch.float32, device='cuda', requires_grad=False)
         maps['local'] = m_bf_face
 
-    return datasets, maps, torch.zeros(n_frames, dtype=torch.float32, device='cuda')
+        # mappings m2
+        m_bf_face_intermediate = torch.eye(n_meshes, n_frames, dtype=torch.float32, device='cuda', requires_grad=False)
+        maps_intermediate['local'] = m_bf_face_intermediate
+
+    return datasets, maps, maps_intermediate, torch.zeros(n_frames, dtype=torch.float32, device='cuda')
 
 # -------------------------------------------------------------------------------------------------
 
 
-def save(meshes, uv, pos_idx, texture, directory):
+def save(meshes, uv, pos_idx, texture, translation, rotation, directory):
     """
     Save the sequence of optimized meshes per frame.
 
     :param meshes: Tensor of per-frame final meshes of shape (n_frames, n_vertices * 3)
     :param uv: Tensor of original UV coordinates
     :param pos_idx: Tensor of mesh faces (triangles)
+    :param texture: Numpy array containing texture
+    :param translation: Tensor of shape (n_frames, 3) containing per-frame head xyz translation
+    :param rotation: Tensor of shape (n_frames, 4) containing per-frame head translations as quaternions
     :param directory: destination path to save to (str)
 
     :return:
@@ -151,10 +250,12 @@ def save(meshes, uv, pos_idx, texture, directory):
     directory = os.path.join(directory, "result")
     if not os.path.isdir(directory):
         os.mkdir(directory)
-    with open(os.path.join(directory, "faces.txt"), mode="r") as f:
-        faces = f.readlines()
-    """with open(os.path.join(directory, "vn.txt"), mode="r") as f:
-        faces = f.readlines()"""
+    try:
+        with open(os.path.join(directory, "faces.txt"), mode="r") as f:
+            faces = f.readlines()
+    except Exception:
+        print("faces.txt not found!")
+        faces = ""
     for i, mesh in enumerate(meshes):
         with open(os.path.join(directory, f"{str(i)}.obj"), mode="w") as f:
             v = 0
@@ -165,8 +266,25 @@ def save(meshes, uv, pos_idx, texture, directory):
                 f.write(f"vt {u[0]} {u[1]}\n")
             f.writelines(faces)
 
-    print("Saving texture...")
-    imageio.imwrite(os.path.join(directory, "texture.png"), np.flip(texture, 0), format="png")
+    print(f"Saving texture... with shape {texture.shape}")
+    try:
+        imageio.imwrite(os.path.join(directory, "texture.png"), (np.flip(texture, 0)*255).astype(np.uint8), format="png")
+    except Exception as e:
+        print(f"imageio failed with '{str(e)}'")
+
+    print(f"Saving head translation and rotation...")
+    try:
+        t = translation.cpu().detach().tolist()
+        r = rotation.cpu().detach().tolist()
+        dictobj = {'translation': t, 'rotation': r}
+        json.dump(dictobj, codecs.open(os.path.join(directory, 'pose.json'), 'w', encoding='utf-8'),
+                  separators=(',', ':'),
+                  sort_keys=True,
+                  indent=4)
+    except Exception as e:
+        print(str(e))
+    print("Everything saved successfully.")
+
 
 # -------------------------------------------------------------------------------------------------
 
@@ -202,17 +320,51 @@ def laplacian_regularization(base_vtx_differential, vtx_pos, vertex_neighbours, 
 
 # -------------------------------------------------------------------------------------------------
 
-
-def fitTake(max_iter, lr_base, lr_ramp, pose_lr, cam_iter, basemeshpath, localblpath, globalblpath, display_interval,
-            log_interval, imdir, calibpath, enable_mip, max_mip_level, texshape, out_dir, resolution,
-            mp4_interval, texpath=""):
+def fitTake(max_iter,
+            lr_base,
+            lr_tex_coef,
+            lr_ramp,
+            lr_t,
+            lr_q,
+            basemeshpath,
+            localblpath,
+            globalblpath,
+            display_interval,
+            log_interval,
+            imdir,
+            calibpath,
+            enable_mip,
+            max_mip_level,
+            texshape,
+            out_dir,
+            resolution,
+            mp4_interval,
+            tex_startlearnratio,
+            tex_ramplearnratio,
+            free_startlearnratio,
+            weight_laplacian,
+            weight_meshedge,
+            meshedge_target,
+            weight_normalconsistency,
+            cam_idxs,
+            whiten_mean=50,
+            whiten_std=25,
+            texpath="",
+            maskpath="",
+            mode="",
+            combined_corrective_coefficient=1.0,
+            regularize_correctives=False,
+            regularize_prior=False):
     """
     Fit one take (continuous range of frames).
 
     :param max_iter: Max iterations (int)
     :param lr_base: Base learning rate
+    :param lr_tex_coef: Coefficient with which to multiply the texture learning rate w.r.t. lr_base
     :param lr_ramp: Learning rate ramp-down for use with torch.optim.lr_scheduler:
                     lr_base * lr_ramp ^ (epoch/max_iter)
+    :param lr_t: Base learning rate for translation vectors
+    :param lr_q: Base learning rate for rotation quaternions
     :param pose_lr: Learning rate for translation and rotation optimization
     :param basemeshpath: Path to the base mesh
     :param localblpath: Path to directory of local blendshapes
@@ -228,8 +380,29 @@ def fitTake(max_iter, lr_base, lr_ramp, pose_lr, cam_iter, basemeshpath, localbl
     :param out_dir: Directory to save result data to
     :param resolution: Resolution to render in (height, width)
     :param mp4_interval: Interval in which to save mp4 frames. 0 for no mp4 saving.
+    :param tex_startlearnratio: Inverse of iteration duration ratio for when to start learning texture
+    :param tex_ramplearnratio: Inverse of iteration duratio ratio for when to ramp learning texture lr
+    :param maskpath: Path to vertex mask directory
+    :param weight_laplacian: Weight coefficient in loss function for laplacian
+    :param weight_meshedge: Weight coefficient in loss function for mesh edge length normalization
+    :param meshedge_target: Target value for mesh edge length normalization
+    :param weight_normalconsistency: Weight coefficient in loss function for mesh normal consistency
+    :param cam_idxs: List of camera indices (ints) to use
+    :param whiten_mean: Mean value to use for reference image whitening
+    :param whiten_std: Standard deviation value to use for reference image whitening
+    :param mode: str (prior, free, combined) mode string that determines what mesh data to optimize
+    :param combined_corrective_coefficient: Float 0.0 <= x <= 1.0, weight coefficient for learned corrective shapes in combined mode
+    :param regularize_correctives: Bool whether to regularize learned corrective deformations with L2 loss
+    :param regularize_prior: Bool whether to regularize rig prior activations with L2 loss
     :return:
     """
+
+    args = locals()
+
+    validmodes = ['prior', 'free', 'combined']
+    if mode not in validmodes:
+        print(f"No valid mode ('{mode}') selected from valid configurations ({validmodes})")
+        return
 
     # miscellaneous setup
     if mp4_interval:
@@ -238,10 +411,8 @@ def fitTake(max_iter, lr_base, lr_ramp, pose_lr, cam_iter, basemeshpath, localbl
         writer = None
 
     try:
-
-        flip_opt_interval = 500
         cams = os.listdir(imdir)
-        n_frames = assertNumFrames(cams, imdir)
+        n_frames, digits = assertNumFrames(cams, imdir)
 
         # calibrations
         with open(calibpath) as json_file:
@@ -251,167 +422,258 @@ def fitTake(max_iter, lr_base, lr_ramp, pose_lr, cam_iter, basemeshpath, localbl
         # basemesh
         basemesh = data.MeshData(basemeshpath)
         v_base = torch.tensor(basemesh.vertices, dtype=torch.float32, device='cuda')
+        print(f"vertices = {basemesh.vertices.size}")
+        return
+        v_base_split = torch.reshape(v_base, (v_base.shape[0] // 3, 3))
         pos_idx = torch.tensor(basemesh.faces, dtype=torch.int32, device='cuda')
+        v_base_loss_mesh = meshes.Meshes(verts=[v_base_split], faces=[pos_idx]).cuda()
         uv = torch.tensor(basemesh.uv, dtype=torch.float32, device='cuda')
         uv_idx = torch.tensor(basemesh.fuv, dtype=torch.int32, device='cuda')
         if texpath:
-            tex = np.array(Image.open(texpath))/255.0
+            tex = np.array(Image.open(texpath)) / 255.0
             tex = tex[..., np.newaxis]
             tex = np.flip(tex, 0)
         else:
             tex = np.random.uniform(low=0.0, high=1.0, size=texshape)
-        tex_opt = torch.tensor(tex.copy(), dtype=torch.float32, device='cuda', requires_grad=False)
-        t_opt = torch.tensor([0.0, 0.0, 0.0], dtype=torch.float32, device='cuda', requires_grad=False)
+        tex_opt = torch.tensor(tex.copy(), dtype=torch.float32, device='cuda', requires_grad=True)
+
+        # per-camera pose optimization
+        # t_opt = torch.tensor([0.0, 0.0, 0.0], dtype=torch.float32, device='cuda', requires_grad=True)
+        t_opt = torch.zeros([9, 3], dtype=torch.float32, device='cuda', requires_grad=True)
         # initial unit quaternion for rotation optimization
-        q_opt = torch.tensor([0.0, 0.0, 0.0, 1.0], dtype=torch.float32, device='cuda', requires_grad=False)
+        # q_opt = torch.tensor([0.0, 0.0, 0.0, 1.0], dtype=torch.float32, device='cuda', requires_grad=True)
+        q_opt = torch.zeros([9, 4], dtype=torch.float32, device='cuda', requires_grad=False)
+        q_opt[:, 3] = 1.0
+        q_opt.requires_grad = True
+        cam_idx_tensor = torch.zeros(9, dtype=torch.float32, device='cuda', requires_grad=False)
+
+        per_frame_t = torch.zeros([n_frames, 3], dtype=torch.float32, device='cuda', requires_grad=True)
+        per_frame_q = torch.zeros([n_frames, 4], dtype=torch.float32, device='cuda', requires_grad=False)
+        per_frame_q[:, 3] = 1.0
+        per_frame_q.requires_grad = True
+
         # final shapes
         result = torch.empty(size=(n_frames, basemesh.vertices.shape[0]), dtype=torch.float32, device='cuda')
 
         # blendshapes and mappings
         n_vertices_x3 = v_base.shape[0]
-        datasets, maps, v_f = setup_dataset(localblpath, globalblpath, n_frames, n_vertices_x3, basemesh.vertices)
+        datasets, maps, maps_intermediate, v_f = setup_dataset(localblpath, globalblpath, n_frames, n_vertices_x3,
+                                                               basemesh.vertices)
+        m1, m2, m3, v_f = setup_dataset_free(n_frames, n_vertices_x3)
+
+        corrective_lr = lr_base
+        if mode == "prior":
+            maps['local'].requires_grad = True
+            maps_intermediate['local'].requires_grad = True
+            blendFunction = blend
+        elif mode == "free":
+            m1.requires_grad = True
+            m2.requires_grad = True
+            m3.requires_grad = True
+            blendFunction = blend_free
+        elif mode == "combined":
+            # start learning corrective shapes after optimizing halfway
+            maps['local'].requires_grad = True
+            maps_intermediate['local'].requires_grad = True
+            blendFunction = blend_combined
+            corrective_lr = lr_base * 0.1
 
         # context and optimizer
         print("Setting up RasterizeGLContext and optimizer...")
         glctx = dr.RasterizeGLContext(device='cuda')
+        # ================================================================
+        # UPDATE PARAMETERS HERE
+        """optimizer = torch.optim.Adam([{"params": maps['local'], 'lr': lr_base, 'weight_decay': 10e-1},
+                                      {"params": maps_intermediate['local'], 'lr': lr_base, 'weight_decay': 10e-1 },
+                                      {"params": t_opt, 'lr': 10e-4 * 0.1},
+                                      {"params": q_opt, 'lr': 10e-4 * 0.1},
+                                      {"params": tex_opt, 'lr': 10e-5 * 0.5, 'weight_decay': 0.0}],
+                                     lr=lr_base, weight_decay=10e-1)"""
+        optimizer = torch.optim.Adam([{"params": m1, 'lr': corrective_lr},
+                                      {"params": m2, 'lr': corrective_lr},
+                                      {"params": m3, 'lr': corrective_lr},
+                                      {"params": maps['local'], 'lr': lr_base},
+                                      {"params": maps_intermediate['local'], 'lr': lr_base},
+                                      {"params": t_opt, 'lr': lr_t},
+                                      {"params": q_opt, 'lr': lr_q},
+                                      {"params": per_frame_t, 'lr': lr_t},
+                                      {"params": per_frame_q, 'lr': lr_q},
+                                      {"params": tex_opt, 'lr': lr_base * lr_tex_coef}], lr=lr_base)
+        scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer,
+                                                      lr_lambda=lambda x: lr_ramp ** (
+                                                              float(x) / float(max_iter)))
+        blurrer = transforms.GaussianBlur(kernel_size=(31, 31))
+        # ================================================================
 
         # local response norm for image contrast normalization
         lrn = torch.nn.LocalResponseNorm(2)
         # lrn3 = torch.nn.LocalResponseNorm(3)
 
-        # starting camera iteration
-        for i in range(cam_iter):
-            for cam in cams:
-                # get camera calibration
-                calib = calibs[cam.split("_")[1]]
-                intr = np.asarray(calib['intrinsic'], dtype=np.float32)
-                dist = np.asarray(calib['distortion'], dtype=np.float32)
-                rot = np.asarray(calib['rotation'], dtype=np.float32)
-                trans_calib = np.asarray(calib['translation'], dtype=np.float32)
+        # set up camera data for lookup
+        calib_lookup = []
+        for c, cam in enumerate(cams):
+            calib = calibs[cam.split("_")[1]]
+            intr = np.asarray(calib['intrinsic'], dtype=np.float32)
+            dist = np.asarray(calib['distortion'], dtype=np.float32)
+            rot = np.asarray(calib['rotation'], dtype=np.float32)
+            trans_calib = np.asarray(calib['translation'], dtype=np.float32)
+            calib_lookup.append({'cam': cam, 'intr': intr, 'dist': dist, 'rot': rot, 'trans_calib': trans_calib})
 
-                camdir = os.path.join(imdir, cam)
-                frames = os.listdir(camdir)
-                for i, frame in enumerate(frames):
-                    # ================================================================
-                    # UPDATE PARAMETERS HERE
-                    optimizer = torch.optim.Adam([{"params": maps['local']},
-                                                  {"params": t_opt},
-                                                  {"params": q_opt},
-                                                  {"params": tex_opt, 'lr': 10e-4 * 0.5, 'weight_decay': 0.0}],
-                                                 lr=lr_base, weight_decay=10e-1)
-                    scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer,
-                                                                  lr_lambda=lambda x: lr_ramp ** (
-                                                                              float(x) / float(max_iter)))
-                    # ================================================================
+        # start camera & frame iteration
+        for i in range(max_iter):
+            cam_idx = random.choice(cam_idxs)
+            frame_idx = random.randint(0, n_frames-1)
 
-                    # reference image to render against
-                    img = np.array(Image.open(os.path.join(camdir, frame)))
-                    ref = torch.tensor(np.flip(img, 0).copy(), dtype=torch.float32, device='cuda')
-                    ref = ref.reshape((ref.shape[0], ref.shape[1], 1))
-                    ref_norm = lrn(ref.permute(0, 2, 1))
-                    ref_norm = ref_norm.permute(0, 2, 1)
-                    smoothing = utils.GaussianSmoothing(1, 32, 1)
-                    smoothing = smoothing.to('cuda')
-                    ref_blur = smoothing(torch.reshape(ref_norm, (1, ref_norm.shape[2], ref_norm.shape[0], ref_norm.shape[1])))
-
-                    # set one-hot frame index
-                    # framenum = int(os.path.splitext(frame)[0].split("_")[-1])
-                    # TODO: comment away later
-                    framenum = i
-                    v_f[framenum] = 1.0
-
-                    # modelview and projection
-                    # lens distortion currently handled as preprocess in reference images
-                    projection = camera.intrinsic_to_projection(intr)
-                    proj = torch.from_numpy(projection).cuda()
-                    modelview = camera.extrinsic_to_modelview(rot, trans_calib)
-                    trans = torch.tensor(camera.translate(0.0, 0.0, 0.0), dtype=torch.float32, device='cuda')
-                    t_mv = torch.matmul(torch.from_numpy(modelview).cuda(), trans)
-
-                    # render
-                    for it in range(max_iter + 1):
-
-                        if it < 500:
-                            rigid_trans = camera.rigid_grad(t_opt * 0.10, roma.unitquat_to_rotmat(q_opt))
-                        else:
-                            rigid_trans = camera.rigid_grad(t_opt * 0.01, roma.unitquat_to_rotmat(q_opt))
-                        tr = torch.matmul(rigid_trans, t_mv)
-                        mvp = torch.matmul(proj, tr)
+            # reference image to render against
+            camdir = os.path.join(imdir, calib_lookup[cam_idx]['cam'])
+            img = np.array(Image.open(os.path.join(camdir, f"{calib_lookup[cam_idx]['cam']}_{frame_idx:0{digits}d}.tif")))
+            img = np.clip(img, 0, 140)
+            # img = utils.normalize_highlights(img, alpha=1.5, beta=1.2)
+            # clip approximate highlights from image
+            # img = utils.reduceHighlights(img, 48)
+            ref = torch.tensor(np.flip(img, 0,).copy(), dtype=torch.float32, device='cuda')
+            ref = ref.reshape((ref.shape[0], ref.shape[1], 1))
+            # ref = utils.whiten(ref, whiten_mean, whiten_std)
 
 
-                        # get blended vertex positions according to eq.
-                        vtx_pos = blend(v_base, maps, datasets, v_f)
-                        # split [n_vertices * 3] to [n_vertices, 3] as a view of the original tensor
-                        vtx_pos_split = torch.reshape(vtx_pos, (vtx_pos.shape[0] // 3, 3))
+            # ref_norm = lrn(ref.permute(0, 2, 1))
+            # ref_norm = ref_norm.permute(0, 2, 1)
+            # smoothing = utils.GaussianSmoothing(1, 32, 1)
+            # smoothing = smoothing.to('cuda')
+            # ref_blur = smoothing(torch.reshape(ref_norm, (1, ref_norm.shape[2], ref_norm.shape[0], ref_norm.shape[1])))
+            # ref_blur = blurrer(torch.reshape(ref, (1, 1600, 1200)))
 
-                        # render
-                        colour = render(glctx, mvp, vtx_pos_split, pos_idx, uv, uv_idx, tex_opt, resolution, enable_mip, max_mip_level)
+            # set one-hot frame- and camera indices
+            v_f[frame_idx] = 1.0
+            cam_idx_tensor[cam_idx] = 1.0
 
+            # modelview and projection
+            # lens distortion currently handled as preprocess in reference images
+            projection = camera.intrinsic_to_projection(calib_lookup[cam_idx]['intr'])
+            proj = torch.from_numpy(projection).cuda(device='cuda')
+            modelview = camera.extrinsic_to_modelview(calib_lookup[cam_idx]['rot'],
+                                                      calib_lookup[cam_idx]['trans_calib'])
+            trans = torch.tensor(camera.translate(0.0, 170.0, 0.0), dtype=torch.float32, device='cuda')
+            t_mv = torch.matmul(torch.from_numpy(modelview).cuda(device='cuda'), trans)
+            rigid_trans = camera.rigid_grad(torch.matmul(cam_idx_tensor, t_opt),
+                              roma.unitquat_to_rotmat(torch.matmul(cam_idx_tensor, q_opt)))
+            rigid_trans_pose = camera.rigid_grad(torch.matmul(v_f, per_frame_t),
+                                            roma.unitquat_to_rotmat(torch.matmul(v_f, per_frame_q)))
+            tr = torch.matmul(rigid_trans, t_mv)
+            tr_pose = torch.matmul(rigid_trans_pose, tr)
+            mvp = torch.matmul(proj, tr_pose)
 
-                        """
-                        =======================
-                        Compute loss and train.
-                        =======================
-                        """
-                        # TODO: add activation constraints (L1 sparsity)
+            # get blended vertex positions according to eq.
+            if mode == "prior":
+                vtx_pos = blend(v_base, maps, maps_intermediate, datasets, v_f)
+            elif mode == "free":
+                vtx_pos = blend_free(v_base, m1, m2, m3, v_f)
+            elif mode == "combined":
+                vtx_pos = blend_combined(v_base, m1, m2, m3, maps, maps_intermediate,
+                                         datasets, v_f, learned_coefficient=0.5)
+            # split [n_vertices * 3] to [n_vertices, 3] as a view of the original tensor
+            vtx_pos_split = torch.reshape(vtx_pos, (vtx_pos.shape[0] // 3, 3))
 
-                        # local contrast (response) normalization over channels to account for
-                        # lighting changes between reference and rendered image
-                        # torch local response norm needs channel dimension to be in dim 1
-                        colour_norm = lrn(colour.permute(0, 2, 1))
-                        # permute back original shape from lrn shape requirements (need to have channel back in dim 2)
-                        colour_norm = colour_norm.permute(0, 2, 1)
-                        # blur before calculating pixel space loss using gaussian kernel of size 32
-                        # more tractable optimization landscape
-                        # built-in gaussian not available for torch tensors since we can't use the right torch3d version
-                        colour_blur = smoothing(torch.reshape(colour_norm, (1, colour_norm.shape[2], colour_norm.shape[0], colour_norm.shape[1])))
+            # render
+            colour = render(glctx, mvp, vtx_pos_split, pos_idx, uv, uv_idx, tex_opt, resolution, enable_mip,
+                            max_mip_level)
 
-                        loss = torch.mean((ref_blur - colour_blur*255) ** 2)  # L2 pixel loss, *255 to channels from opengl
-                        optimizer.zero_grad()
-                        loss.backward()
-                        optimizer.step()
-                        scheduler.step()
+            """
+            =======================
+            Compute loss and train.
+            =======================
+            """
 
-                        # scale and normalize quaternion
-                        with torch.no_grad():
-                            q_opt /= torch.sum(q_opt**2) ** 0.5
+            # local contrast (response) normalization over channels to account for
+            # lighting changes between reference and rendered image
+            # torch local response norm needs channel dimension to be in dim 1
+            # colour_norm = lrn(colour.permute(0, 2, 1))
+            # permute back original shape from lrn shape requirements (need to have channel back in dim 2)
+            # colour_norm = colour_norm.permute(0, 2, 1)
+            # blur before calculating pixel space loss using gaussian kernel of size 32
+            # more tractable optimization landscape
+            # built-in gaussian not available for torch tensors since we can't use the right torch3d version
+            # colour_blur = smoothing(
+                # torch.reshape(colour_norm, (1, colour_norm.shape[2], colour_norm.shape[0], colour_norm.shape[1])))
+            # colour_blur = blurrer(torch.reshape(colour, (1, 1600, 1200)))
 
-                        # Print loss logging
-                        log = (log_interval and (it % log_interval == 0))
-                        if log:
-                            print(f"Img {framenum} - It[{it}] - Loss: {loss}")
+            # L2 pixel loss, *255 to channels from opengl. Second loss term to penalize large translations
+            # mesh laplacian term through pytorch3d
+            loss_mesh = meshes.Meshes(verts=[vtx_pos_split], faces=[pos_idx]).cuda()
+            loss = torch.mean((ref - colour*255) ** 2) + \
+                    weight_meshedge*mel(loss_mesh, 0.1) + \
+                    weight_laplacian*laplacian(loss_mesh)**2 + \
+                    weight_normalconsistency*mnc(loss_mesh) #+  \
+                    # torch.mean(torch.sum(torch.matmul(m2, m1) ** 2, dim=0))
+            if regularize_correctives and mode == "combined" and i > max_iter/2:
+                # regularize the learned corrective deformations
+                mapped = torch.matmul(m1, v_f)
+                basis = torch.matmul(m2, mapped)
+                deformations = torch.matmul(m3, basis)
+                loss += torch.mean(deformations ** 2)
 
-                        """# change the target of optimization
-                        if it % flip_opt_interval == 0:
-                            # tex_opt.requires_grad = not tex_opt.requires_grad
-                            if it == 1000:
-                                print("Switched to optimizing blendshape activations!")
-                                maps['local'].requires_grad = True
-                                t_opt.requires_grad = not t_opt.requires_grad
-                                q_opt.requires_grad = not q_opt.requires_grad
-                            elif it >= 2000:
-                                tex_opt.requires_grad = True"""
+            # todo: add a loss term to reward pose optimization w.r.t. blendshape activations
+            if regularize_prior and mode == "prior":
+                mapped = torch.matmul(maps['local'], v_f)
+                mapped_intermediate = torch.matmul(maps_intermediate['local'], mapped)
+                loss += torch.mean(mapped_intermediate ** 2)
 
-                        # Show/save image.
-                        display_image = (display_interval and (it % display_interval == 0)) or it == max_iter
-                        save_mp4 = (mp4_interval and (it % mp4_interval == 0) and it)
-                        if display_image or save_mp4:
-                            img_ref = torch.reshape(ref_blur, (ref_blur.shape[2], ref_blur.shape[3], ref_blur.shape[1])).cpu().numpy()
-                            # img_ref = ref.cpu().numpy()
-                            img_ref = np.flip(np.array(img_ref.copy(), dtype=np.float32) / 255, 0)
-                            img_col = np.flip(torch.reshape(colour_blur, (colour_blur.shape[2], colour_blur.shape[3], colour_blur.shape[1])).cpu().detach().numpy(), 0)
-                            # img_col = np.flip(colour.cpu().detach().numpy(), 0)
-                            result_image = utils.make_img(np.stack([img_ref, img_col]))
-                            if display_image:
-                                utils.display_image(result_image)
-                            if save_mp4:
-                                writer.append_data(np.clip(np.rint(result_image * 255.0), 0, 255).astype(np.uint8))
-                            # img_out = colour[0].cpu().numpy()
-                            # utils.display_image(img_out, size=img.shape[::-1])
+            with torch.no_grad():
+                if not i % 500:
+                    print(f"=== MEL: {weight_meshedge*mel(loss_mesh, meshedge_target)} ---"
+                          f" LAP: {weight_laplacian*laplacian(loss_mesh)**2} ---"
+                          f" MNC: {weight_normalconsistency*mnc(loss_mesh)}")
+            """if i > max_iter/tex_startlearnratio:
+                tex_opt.requires_grad = True
+            if i > max_iter/tex_ramplearnratio[0]:
+                optimizer.param_groups[7]['lr'] *= 10
+            if i > max_iter/tex_ramplearnratio[1]:
+                optimizer.param_groups[7]['lr'] *= 10
+            if i > max_iter/free_startlearnratio:
+                m1.requires_grad = False
+                m2.requires_grad = False
+                m3.requires_grad = False"""
 
-                    # utils.save_image(os.path.join(out_dir, frame), img_col)
-                    v_f[framenum] = 0.0
-                    result[framenum] = vtx_pos
+            if mode == "combined":
+                # start learning corrective shapes after optimizing halfway
+                if i > max_iter/2:
+                    m1.requires_grad = True
+                    m2.requires_grad = True
+                    m3.requires_grad = True
+
+            optimizer.zero_grad()
+            loss.backward()
+            optimizer.step()
+            scheduler.step()
+
+            # scale and normalize quaternionS
+            with torch.no_grad():
+                q_opt /= torch.sum(q_opt ** 2) ** 0.5
+                per_frame_q /= torch.sum(per_frame_q ** 2) ** 0.5
+
+            # Print loss logging
+            log = (log_interval and (i % log_interval == 0))
+            if log:
+                print(f"Img {frame_idx} cam {cam_idx} - It[{i}] - Loss: {loss} - lr: {scheduler.get_lr()}")
+
+            # Show/save image.
+            display_image = (display_interval and (i % display_interval == 0)) or i == max_iter
+            save_mp4 = (mp4_interval and (i % mp4_interval == 0) and i)
+            if display_image or save_mp4:
+                # img_ref = torch.reshape(ref_blur, (ref_blur.shape[1], ref_blur.shape[2], ref_blur.shape[0])).cpu().numpy()
+                img_ref = ref.cpu().numpy()
+                img_ref = np.flip(np.array(img_ref.copy(), dtype=np.float32) / 255, 0)
+                # img_col = np.flip(torch.reshape(colour_blur, (colour_blur.shape[1], colour_blur.shape[2], colour_blur.shape[0])).cpu().detach().numpy(), 0)
+                img_col = np.flip(colour.cpu().detach().numpy(), 0)
+                result_image = utils.make_img(np.stack([img_ref, img_col]))
+                if display_image:
+                    utils.display_image(result_image)
+                if save_mp4:
+                    writer.append_data(np.clip(np.rint(result_image * 255.0), 0, 255).astype(np.uint8))
+
+            v_f[frame_idx] = 0.0
+            cam_idx_tensor[cam_idx] = 0.0
+            result[frame_idx] = vtx_pos.detach().clone()
 
     except KeyboardInterrupt:
         if writer is not None:
@@ -420,5 +682,11 @@ def fitTake(max_iter, lr_base, lr_ramp, pose_lr, cam_iter, basemeshpath, localbl
         if writer is not None:
             writer.close()
 
-    save(result, uv, pos_idx, tex_opt.cpu().detach().numpy(), out_dir)
+    save(result, uv, pos_idx, tex_opt.cpu().detach().clone().numpy(),
+         per_frame_t.cpu(), per_frame_q.cpu(), out_dir)
+
+    # save config file with settings
+    with open(os.path.join(out_dir, "config.txt"), 'w') as f:
+        for arg in args:
+            f.write(f"{arg}: '{args[arg]}'\n")
     print("Done")

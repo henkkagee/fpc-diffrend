@@ -3,8 +3,68 @@ import math
 
 from PIL import Image
 import numpy as np
+import cv2
 
 import torch
+
+# -------------------------------------------------------------------------------------------------
+
+def reduceHighlights(img, mean):
+    remainder = img - mean
+    reduced = abs(img - remainder)
+    return reduced
+
+def normalize_highlights(img, alpha=0.99, beta=0.5):
+    """
+    Normalize the highlights in the input image.
+
+    Parameters:
+    - img: The input image as a Numpy array.
+    - alpha: A constant to control the amount of normalization.
+    - beta: A constant to control the brightness of the output image.
+
+    Returns:
+    - The normalized image.
+    """
+    img_min = np.min(img)
+    img_range = np.max(img) - img_min
+    img_scaled = (img - img_min) / img_range
+    img_normalized = img_scaled**alpha
+    img_normalized = img_normalized * img_range + img_min
+    img_normalized = img_normalized * beta
+    return img_normalized
+
+# -------------------------------------------------------------------------------------------------
+
+def whiten(image, mean, std):
+    """
+    Whiten an image.
+
+    Args:
+        img (torch.tensor): Image to whiten as tensor
+        mean (float): The mean to use for the whitening operation
+        std (float): The standard deviation to use for the whitening operation
+
+    Returns:
+        img (torch.tensor): Whitened image
+    """
+    whitenedImage = (image - mean) / std
+    return whitenedImage
+
+# -------------------------------------------------------------------------------------------------
+
+def normalizeImage(image, low, high):
+    """
+    Normalize numpy image to range
+
+    Args:
+        image:
+
+    Returns:
+
+    """
+
+    return (image - low)/(high - low)
 
 # -------------------------------------------------------------------------------------------------
 

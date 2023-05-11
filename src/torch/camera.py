@@ -13,9 +13,9 @@ def transform_clip(mvp, pos):
     :param pos: Tensor of vertex positions
     :return: Tensor of transformed vertex positions
     """
-    t_mtx = torch.from_numpy(mvp).cuda() if isinstance(mvp, np.ndarray) else mvp
+    t_mtx = torch.from_numpy(mvp).cuda(device='cuda') if isinstance(mvp, np.ndarray) else mvp
     # (x,y,z) -> (x,y,z,1)
-    posw = torch.cat([pos, torch.ones([pos.shape[0], 1]).cuda()], axis=1)
+    posw = torch.cat([pos, torch.ones([pos.shape[0], 1]).cuda(device='cuda')], axis=1)
     ret = torch.matmul(posw, t_mtx.t())[None, ...]
     return ret
 

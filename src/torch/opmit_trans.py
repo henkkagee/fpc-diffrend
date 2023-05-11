@@ -53,8 +53,8 @@ def simple_render():
 
     # reference image to render against
     img = np.array(Image.open(os.path.join(camdir, frame)))/255
-    ref = torch.from_numpy(img).cuda().reshape((1600, 1200, 1))
-    # ref = torch.from_numpy(np.flip(img, 0).copy()).cuda().reshape((1600, 1200, 1))
+    ref = torch.from_numpy(img).cuda(device='cuda').reshape((1600, 1200, 1))
+    # ref = torch.from_numpy(np.flip(img, 0).copy()).cuda(device='cuda').reshape((1600, 1200, 1))
 
     glctx = dr.RasterizeGLContext(device='cuda')
     optimizer = torch.optim.Adam([y_opt, fx_opt, fy_opt], lr=1e-1)
@@ -82,7 +82,7 @@ def simple_render():
         texc, _ = dr.interpolate(uv[None, ...], rast, uv_idx)
         colour = dr.texture(tex[None, ...], texc, filter_mode='linear')
         colour = dr.antialias(colour, rast, pos_clip, tri)
-        colour = torch.where(rast[..., 3:] > 0, colour, torch.tensor(0.0).cuda())[0]
+        colour = torch.where(rast[..., 3:] > 0, colour, torch.tensor(0.0).cuda(device='cuda'))[0]
 
         # Compute loss and train.
         # geom_loss = torch.mean(torch.sum((torch.abs(vtx_pos_opt) - .5) ** 2, dim=1) ** 0.5)

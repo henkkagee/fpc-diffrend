@@ -6,7 +6,7 @@ from PIL import Image
 
 
 
-path = r"C:\Users\Henrik\fpc-diffrend/data/calibration/2021-07-01/calibration_DIlens.json"
+path = r"C:\Users\Henrik\fpc-diffrend/calibration/2021-07-01/calibration_DIlens.json"
 with open(path, 'r') as json_file:
     calib = json.load(json_file)
 
