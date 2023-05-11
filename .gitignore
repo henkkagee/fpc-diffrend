@@ -17,6 +17,7 @@ data/
 # Environments
 .env
 .venv
+diffrend39/
 env/
 venv/
 ENV/

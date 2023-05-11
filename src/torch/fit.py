@@ -346,6 +346,7 @@ def fitTake(max_iter,
             weight_meshedge,
             meshedge_target,
             weight_normalconsistency,
+            cam_idxs,
             whiten_mean=50,
             whiten_std=25,
             texpath="",
@@ -386,6 +387,7 @@ def fitTake(max_iter,
     :param weight_meshedge: Weight coefficient in loss function for mesh edge length normalization
     :param meshedge_target: Target value for mesh edge length normalization
     :param weight_normalconsistency: Weight coefficient in loss function for mesh normal consistency
+    :param cam_idxs: List of camera indices (ints) to use
     :param whiten_mean: Mean value to use for reference image whitening
     :param whiten_std: Standard deviation value to use for reference image whitening
     :param mode: str (prior, free, combined) mode string that determines what mesh data to optimize
@@ -519,8 +521,6 @@ def fitTake(max_iter,
 
         # start camera & frame iteration
         for i in range(max_iter):
-            # cam_idx = random.randint(0, 8)
-            cam_idxs = [0, 2, 3, 5, 6, 8]
             cam_idx = random.choice(cam_idxs)
             frame_idx = random.randint(0, n_frames-1)
 

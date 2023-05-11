@@ -34,6 +34,7 @@ def run():
         weight_meshedge=0,  # 70
         meshedge_target=0.05,
         weight_normalconsistency=0,  # 400
+        cam_idxs=[0, 1, 2, 3, 4, 5, 6, 7, 8],
         whiten_mean=10,
         whiten_std=2,
         mode="prior",
