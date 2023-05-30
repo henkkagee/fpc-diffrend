@@ -1,4 +1,6 @@
-# Facial Performance Capture through Differentiable Rendering
+# Facial Performance Capture through Differentiable Rendering with a Facial Rig Prior
+
+![Comparison of reference video and inferred facial animation rendered from the same perspective](doc/comparison_texture.gif)
 
 ## Licensing
 
@@ -46,8 +48,6 @@ activations, instead of the shapes themselves, as done in previous works. Moreov
 we obtain head stabilization data that is important to have down the line in video
 game production, and the use of blendshapes as the basis of our resulting animation
 enables semantically meaningful editing after inference.
-
-![Comparison of reference video and inferred facial animation rendered from the same perspective](doc/comparison_texture.gif)
 
 ![Inferred animation rendered from nine camera angles using wireframe](doc/wireframe_grid.gif)
 
