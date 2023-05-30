@@ -356,6 +356,7 @@ def fitTake(max_iter,
             regularize_correctives=False,
             regularize_prior=False):
     """
+    Main loop.
     Fit one take (continuous range of frames).
 
     :param max_iter: Max iterations (int)
@@ -528,20 +529,8 @@ def fitTake(max_iter,
             camdir = os.path.join(imdir, calib_lookup[cam_idx]['cam'])
             img = np.array(Image.open(os.path.join(camdir, f"{calib_lookup[cam_idx]['cam']}_{frame_idx:0{digits}d}.tif")))
             img = np.clip(img, 0, 140)
-            # img = utils.normalize_highlights(img, alpha=1.5, beta=1.2)
-            # clip approximate highlights from image
-            # img = utils.reduceHighlights(img, 48)
             ref = torch.tensor(np.flip(img, 0,).copy(), dtype=torch.float32, device='cuda')
             ref = ref.reshape((ref.shape[0], ref.shape[1], 1))
-            # ref = utils.whiten(ref, whiten_mean, whiten_std)
-
-
-            # ref_norm = lrn(ref.permute(0, 2, 1))
-            # ref_norm = ref_norm.permute(0, 2, 1)
-            # smoothing = utils.GaussianSmoothing(1, 32, 1)
-            # smoothing = smoothing.to('cuda')
-            # ref_blur = smoothing(torch.reshape(ref_norm, (1, ref_norm.shape[2], ref_norm.shape[0], ref_norm.shape[1])))
-            # ref_blur = blurrer(torch.reshape(ref, (1, 1600, 1200)))
 
             # set one-hot frame- and camera indices
             v_f[frame_idx] = 1.0
@@ -584,19 +573,6 @@ def fitTake(max_iter,
             =======================
             """
 
-            # local contrast (response) normalization over channels to account for
-            # lighting changes between reference and rendered image
-            # torch local response norm needs channel dimension to be in dim 1
-            # colour_norm = lrn(colour.permute(0, 2, 1))
-            # permute back original shape from lrn shape requirements (need to have channel back in dim 2)
-            # colour_norm = colour_norm.permute(0, 2, 1)
-            # blur before calculating pixel space loss using gaussian kernel of size 32
-            # more tractable optimization landscape
-            # built-in gaussian not available for torch tensors since we can't use the right torch3d version
-            # colour_blur = smoothing(
-                # torch.reshape(colour_norm, (1, colour_norm.shape[2], colour_norm.shape[0], colour_norm.shape[1])))
-            # colour_blur = blurrer(torch.reshape(colour, (1, 1600, 1200)))
-
             # L2 pixel loss, *255 to channels from opengl. Second loss term to penalize large translations
             # mesh laplacian term through pytorch3d
             loss_mesh = meshes.Meshes(verts=[vtx_pos_split], faces=[pos_idx]).cuda()
@@ -623,16 +599,6 @@ def fitTake(max_iter,
                     print(f"=== MEL: {weight_meshedge*mel(loss_mesh, meshedge_target)} ---"
                           f" LAP: {weight_laplacian*laplacian(loss_mesh)**2} ---"
                           f" MNC: {weight_normalconsistency*mnc(loss_mesh)}")
-            """if i > max_iter/tex_startlearnratio:
-                tex_opt.requires_grad = True
-            if i > max_iter/tex_ramplearnratio[0]:
-                optimizer.param_groups[7]['lr'] *= 10
-            if i > max_iter/tex_ramplearnratio[1]:
-                optimizer.param_groups[7]['lr'] *= 10
-            if i > max_iter/free_startlearnratio:
-                m1.requires_grad = False
-                m2.requires_grad = False
-                m3.requires_grad = False"""
 
             if mode == "combined":
                 # start learning corrective shapes after optimizing halfway

@@ -3,6 +3,10 @@ import fit
 
 # ------------------------------------------------------------
 
+"""
+Main function for tweaking optimization parameters and paths
+
+"""
 
 def run():
     fit.fitTake(
@@ -18,7 +22,7 @@ def run():
         display_interval=50,
         log_interval=50,
         imdir=r"C:\Users\Henrik\fpc-diffrend\data\reference\rom\20191106_ilkvil_ML_ROM_take0001_pod2colour_range03",
-        calibpath=r"C:\Users\Henrik\fpc-diffrend\calibration\combined\calibration.json",
+        calibpath=r"C:\Users\Henrik\fpc-diffrend\calibration\calibration.json",
         enable_mip=False,
         max_mip_level=6,
         texshape=(1024, 1024, 1),

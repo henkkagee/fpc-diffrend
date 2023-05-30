@@ -10,6 +10,12 @@ import xml.etree.ElementTree as et
 # for cam in root:
 # ...
 
+
+"""
+Calibrate cameras with cv2 with a 10x10 circular camera calibration pattern
+
+"""
+
 # ------------------------------------------------------------------------
 
 def changeCamName(camname):

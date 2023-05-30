@@ -4,7 +4,10 @@ import numpy as np
 import os
 from PIL import Image
 
+"""
+Undistort images with cv2 based on camera intrinsics
 
+"""
 
 path = r"C:\Users\Henrik\fpc-diffrend/calibration/2021-07-01/calibration_DIlens.json"
 with open(path, 'r') as json_file:
