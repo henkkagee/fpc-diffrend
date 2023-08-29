@@ -12,7 +12,7 @@ This project aims to solve markerless facial performance capture through differe
 
 This work is my Master's thesis at Aalto University and made possible in cooperation with Remedy Entertainment. The project is made open-source to share knowledge on facial performance capture in the industry.
 
-Accompanying reference and rig data for reproducing the results will later be published here. The thesis itself is published at [aaltodoc.aalto.fi](aaltodoc.aalto.fi) once it is graded.
+Accompanying reference and rig data for reproducing the results will later be published here. The thesis itself is published at [https://aaltodoc.aalto.fi/handle/123456789/122747](https://aaltodoc.aalto.fi/handle/123456789/122747).
 
 ## Abstract
 
